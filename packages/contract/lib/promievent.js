@@ -71,7 +71,7 @@ function PromiEvent(justPromise, bugger = undefined, isDeploy = false) {
   }
 
   this.resolve = resolve;
-  this.reject = rejectHijacker.bind(this);
+  this.reject = modifyRejectHijacker(rejectHijacker, reject).bind(this);
   this.eventEmitter = eventEmitter;
   if (bugger) {
     this.debug = true;
@@ -87,3 +87,44 @@ PromiEvent.prototype.setTransactionHash = function (txHash) {
 };
 
 module.exports = PromiEvent;
+
+// The added functionality is implemented below, to make merging
+// future changes easier.
+
+const solidityErrorsModule = loadSolidityErrorsModule();
+
+function modifyRejectHijacker(rejectHijacker, reject) {
+  if (solidityErrorsModule === undefined) {
+    return rejectHijacker;
+  }
+
+  const currentRawStackTrace = getCurrentStack();
+
+  return function modifiedRejectHijacker(e) {
+
+    if (e.stackTrace !== undefined) {
+      const error = encodeSolidityStackTrace(
+        e.message,
+        e.stackTrace,
+        currentRawStackTrace.slice(3)
+      );
+      reject(error);
+      return;
+    }
+
+    rejectHijacker(e);
+  }
+}
+
+function loadSolidityErrorsModule() {
+  return tryLoadingModule("hardhat/internal/hardhat-network/stack-traces/solidity-errors") 
+    || tryLoadingModule("@nomiclabs/buidler/internal/buidler-evm/stack-traces/solidity-errors");
+}
+
+function tryLoadingModule(moduleName) {
+  try {
+    return require(moduleName);
+  } catch (e) {
+    // Do nothing
+  } 
+}
