@@ -29,7 +29,7 @@ function PromiEvent(justPromise, bugger = undefined, isDeploy = false) {
       getSolidityStackTrace = async () => undefined;
     }
 
-    getSolidityStackTrace().then((solidityStackTrace) => {
+    getSolidityStackTrace().then(solidityStackTrace => {
       debug("e.stack: %s", e.stack);
       debug("originalStackTrace: %s", originalStackTrace);
       debug("solidityStackTrace: %s", solidityStackTrace);
@@ -49,7 +49,7 @@ function PromiEvent(justPromise, bugger = undefined, isDeploy = false) {
           let [
             _,
             solidityFirstLine,
-            solidityRemaining,
+            solidityRemaining
           ] = solidityStackTrace.match(/^(.*?)\r?\n((.|\r|\n)*)$/);
 
           stackTrace = stackTrace.replace(
@@ -98,12 +98,11 @@ function modifyRejectHijacker(rejectHijacker, reject) {
     return rejectHijacker;
   }
 
-  const currentRawStackTrace = getCurrentStack();
+  const currentRawStackTrace = solidityErrorsModule.getCurrentStack();
 
   return function modifiedRejectHijacker(e) {
-
     if (e.stackTrace !== undefined) {
-      const error = encodeSolidityStackTrace(
+      const error = solidityErrorsModule.encodeSolidityStackTrace(
         e.message,
         e.stackTrace,
         currentRawStackTrace.slice(3)
@@ -112,13 +111,19 @@ function modifyRejectHijacker(rejectHijacker, reject) {
       return;
     }
 
-    rejectHijacker(e);
-  }
+    rejectHijacker.call(this, e);
+  };
 }
 
 function loadSolidityErrorsModule() {
-  return tryLoadingModule("hardhat/internal/hardhat-network/stack-traces/solidity-errors") 
-    || tryLoadingModule("@nomiclabs/buidler/internal/buidler-evm/stack-traces/solidity-errors");
+  return (
+    tryLoadingModule(
+      "hardhat/internal/hardhat-network/stack-traces/solidity-errors"
+    ) ||
+    tryLoadingModule(
+      "@nomiclabs/buidler/internal/buidler-evm/stack-traces/solidity-errors"
+    )
+  );
 }
 
 function tryLoadingModule(moduleName) {
@@ -126,5 +131,5 @@ function tryLoadingModule(moduleName) {
     return require(moduleName);
   } catch (e) {
     // Do nothing
-  } 
+  }
 }
