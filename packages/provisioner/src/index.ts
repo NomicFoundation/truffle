@@ -1,4 +1,4 @@
-import TruffleConfig from "@truffle/config";
+import type TruffleConfig from "@truffle/config";
 
 const provision = (contractAbstraction: any, truffleConfig: TruffleConfig) => {
   if (truffleConfig.provider) {
@@ -13,11 +13,24 @@ const provision = (contractAbstraction: any, truffleConfig: TruffleConfig) => {
     contractAbstraction.setNetworkType(
       truffleConfig.networks[truffleConfig.network].type
     );
+    // this is a workaround to allow users to opt out of the block polling that
+    // web3 performs when we listen for confirmations which causes problems in testing
+    if (truffleConfig.networks[truffleConfig.network]) {
+      const {disableConfirmationListener} = truffleConfig.networks[truffleConfig.network];
+      contractAbstraction.disableConfirmationListener = disableConfirmationListener;
+    }
   }
 
   contractAbstraction.ens = truffleConfig.ens;
 
-  ["from", "gas", "gasPrice"].forEach(key => {
+  [
+    "from",
+    "gas",
+    "gasPrice",
+    "maxFeePerGas",
+    "maxPriorityFeePerGas",
+    "type"
+  ].forEach(key => {
     if (truffleConfig[key]) {
       const obj: any = {};
       obj[key] = truffleConfig[key];

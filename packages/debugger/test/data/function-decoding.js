@@ -1,18 +1,18 @@
 import debugModule from "debug";
-const debug = debugModule("test:data:function-decoding");
+const debug = debugModule("debugger:test:data:function-decoding");
 
 import { assert } from "chai";
 
-import Ganache from "ganache-core";
+import Ganache from "ganache";
 
 import { prepareContracts, lineOf } from "../helpers";
 import Debugger from "lib/debugger";
 import * as Codec from "@truffle/codec";
 
-import solidity from "lib/solidity/selectors";
+import sourcemapping from "lib/sourcemapping/selectors";
 
 const __EXTERNALS = `
-pragma solidity ^0.7.0;
+pragma solidity ^0.8.0;
 
 contract ExternalsTester {
 
@@ -48,11 +48,14 @@ contract ExternalsBase {
 }
 
 contract ExternalsDerived is ExternalsBase {
+  function dummy() public {
+    //this function just distinguishes ExternalsBase from ExternalsDerived
+  }
 }
 `;
 
 const __INTERNALS = `
-pragma solidity ^0.7.1;
+pragma solidity ^0.8.0;
 
 contract InternalsBase {
 
@@ -130,13 +133,21 @@ let sources = {
 };
 
 describe("Function Pointer Decoding", function () {
-  var provider;
-
-  var abstractions;
-  var compilations;
+  let provider;
+  let abstractions;
+  let compilations;
 
   before("Create Provider", async function () {
-    provider = Ganache.provider({ seed: "debugger", gasLimit: 7000000 });
+    provider = Ganache.provider({
+      seed: "debugger",
+      gasLimit: 7000000,
+      logging: {
+        quiet: true
+      },
+      miner: {
+        instamine: "strict"
+      }
+    });
   });
 
   before("Prepare contracts and artifacts", async function () {
@@ -156,12 +167,10 @@ describe("Function Pointer Decoding", function () {
 
     let bugger = await Debugger.forTx(txHash, { provider, compilations });
 
-    let sourceId = bugger.view(solidity.current.source).id;
-    let compilationId = bugger.view(solidity.current.source).compilationId;
-    let source = bugger.view(solidity.current.source).source;
+    let sourceId = bugger.view(sourcemapping.current.source).id;
+    let source = bugger.view(sourcemapping.current.source).source;
     await bugger.addBreakpoint({
       sourceId,
-      compilationId,
       line: lineOf("BREAK HERE", source)
     });
 
@@ -196,18 +205,16 @@ describe("Function Pointer Decoding", function () {
 
     let bugger = await Debugger.forTx(txHash, { provider, compilations });
 
-    let sourceId = bugger.view(solidity.current.source).id;
-    let compilationId = bugger.view(solidity.current.source).compilationId;
-    let source = bugger.view(solidity.current.source).source;
+    let sourceId = bugger.view(sourcemapping.current.source).id;
+    let source = bugger.view(sourcemapping.current.source).source;
     await bugger.addBreakpoint({
       sourceId,
-      compilationId,
       line: lineOf("BREAK HERE (DEPLOYED)", source)
     });
 
     await bugger.continueUntilBreakpoint();
 
-    const variables = Codec.Format.Utils.Inspect.nativizeVariables(
+    const variables = Codec.Format.Utils.Inspect.unsafeNativizeVariables(
       await bugger.variables()
     );
 
@@ -217,7 +224,7 @@ describe("Function Pointer Decoding", function () {
       baseFn: "InternalsBase.inherited",
       libFn: "InternalsLib.libraryFn",
       storedFreeFn: "freeFn",
-      undefFn: "assert(false)",
+      undefFn: "<uninitialized>",
       storageFn: "InternalsTest.run",
       readFromConstructor: "InternalsTest.run"
     };
@@ -233,18 +240,16 @@ describe("Function Pointer Decoding", function () {
 
     let bugger = await Debugger.forTx(txHash, { provider, compilations });
 
-    let sourceId = bugger.view(solidity.current.source).id;
-    let compilationId = bugger.view(solidity.current.source).compilationId;
-    let source = bugger.view(solidity.current.source).source;
+    let sourceId = bugger.view(sourcemapping.current.source).id;
+    let source = bugger.view(sourcemapping.current.source).source;
     await bugger.addBreakpoint({
       sourceId,
-      compilationId,
       line: lineOf("BREAK HERE (CONSTRUCTOR)", source)
     });
 
     await bugger.continueUntilBreakpoint();
 
-    const variables = Codec.Format.Utils.Inspect.nativizeVariables(
+    const variables = Codec.Format.Utils.Inspect.unsafeNativizeVariables(
       await bugger.variables()
     );
 
@@ -254,7 +259,7 @@ describe("Function Pointer Decoding", function () {
       baseFn: "InternalsBase.inherited",
       libFn: "InternalsLib.libraryFn",
       storedFreeFn: "freeFn",
-      undefFn: "assert(false)",
+      undefFn: "<uninitialized>",
       storageFn: "InternalsTest.run"
     };
 

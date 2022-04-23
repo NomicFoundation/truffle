@@ -1,3 +1,9 @@
+/**
+ * @protected
+ *
+ * @packageDocumentation
+ */
+
 import debugModule from "debug";
 const debug = debugModule("codec:storage:decode");
 
@@ -6,14 +12,14 @@ import * as Conversion from "@truffle/codec/conversion";
 import * as Format from "@truffle/codec/format";
 import * as Basic from "@truffle/codec/basic";
 import * as Bytes from "@truffle/codec/bytes";
-import * as Storage from "@truffle/codec/storage/types";
+import type * as Storage from "@truffle/codec/storage/types";
 import * as Utils from "@truffle/codec/storage/utils";
-import * as Pointer from "@truffle/codec/pointer";
-import { DecoderRequest } from "@truffle/codec/types";
+import type * as Pointer from "@truffle/codec/pointer";
+import type { DecoderRequest } from "@truffle/codec/types";
 import * as Evm from "@truffle/codec/evm";
 import { storageSize } from "@truffle/codec/storage/allocate";
 import BN from "bn.js";
-import { DecodingError } from "@truffle/codec/errors";
+import { handleDecodingError } from "@truffle/codec/errors";
 
 export function* decodeStorage(
   dataType: Format.Types.Type,
@@ -41,25 +47,19 @@ export function* decodeStorageReferenceByAddress(
   try {
     rawValue = yield* read(pointer, info.state);
   } catch (error) {
-    return <Format.Errors.ErrorResult>{
-      //no idea why TS is failing here
-      type: dataType,
-      kind: "error" as const,
-      error: (<DecodingError>error).error
-    };
+    return handleDecodingError(dataType, error);
   }
   const startOffset = Conversion.toBN(rawValue);
   let rawSize: Storage.StorageLength;
   try {
-    rawSize = storageSize(dataType, info.userDefinedTypes, allocations);
+    rawSize = storageSize(
+      dataType,
+      info.userDefinedTypes,
+      allocations,
+      info.currentContext.compiler
+    );
   } catch (error) {
-    //error: DecodingError
-    return <Format.Errors.ErrorResult>{
-      //no idea why TS is failing here
-      type: dataType,
-      kind: "error" as const,
-      error: (<DecodingError>error).error
-    };
+    return handleDecodingError(dataType, error);
   }
   //we *know* the type being decoded must be sized in words, because it's a
   //reference type, but TypeScript doesn't, so we'll have to use a type
@@ -109,12 +109,7 @@ export function* decodeStorageReference(
           try {
             data = yield* read(pointer, state);
           } catch (error) {
-            return <Format.Errors.ErrorResult>{
-              //no idea why TS is failing here
-              type: dataType,
-              kind: "error" as const,
-              error: (<DecodingError>error).error
-            };
+            return handleDecodingError(dataType, error);
           }
           lengthAsBN = Conversion.toBN(data);
           break;
@@ -125,7 +120,7 @@ export function* decodeStorageReference(
       }
       try {
         length = lengthAsBN.toNumber();
-      } catch (_) {
+      } catch {
         return {
           type: dataType,
           kind: "error" as const,
@@ -143,15 +138,11 @@ export function* decodeStorageReference(
         baseSize = storageSize(
           dataType.baseType,
           info.userDefinedTypes,
-          allocations
+          allocations,
+          info.currentContext.compiler
         );
       } catch (error) {
-        //error: DecodingError
-        return {
-          type: dataType,
-          kind: "error" as const,
-          error: (<DecodingError>error).error
-        };
+        return handleDecodingError(dataType, error);
       }
       debug("baseSize %o", baseSize);
 
@@ -254,12 +245,7 @@ export function* decodeStorageReference(
       try {
         data = yield* read(pointer, state);
       } catch (error) {
-        return <Format.Errors.ErrorResult>{
-          //no idea why TS is failing here
-          type: dataType,
-          kind: "error" as const,
-          error: (<DecodingError>error).error
-        };
+        return handleDecodingError(dataType, error);
       }
 
       let lengthByte = data[Evm.Utils.WORD_SIZE - 1];
@@ -286,7 +272,7 @@ export function* decodeStorageReference(
           .divn(2);
         try {
           length = lengthAsBN.toNumber();
-        } catch (_) {
+        } catch {
           return <
             | Format.Errors.BytesDynamicErrorResult
             | Format.Errors.StringErrorResult
@@ -406,15 +392,14 @@ export function* decodeStorageReference(
       const valueType = dataType.valueType;
       let valueSize: Storage.StorageLength;
       try {
-        valueSize = storageSize(valueType, info.userDefinedTypes, allocations);
+        valueSize = storageSize(
+          valueType,
+          info.userDefinedTypes,
+          allocations,
+          info.currentContext.compiler
+        );
       } catch (error) {
-        //error: DecodingError
-        debug("couldn't get value size! error: %o", error);
-        return {
-          type: dataType,
-          kind: "error" as const,
-          error: (<DecodingError>error).error
-        };
+        return handleDecodingError(dataType, error);
       }
 
       let decodedEntries: Format.Values.KeyValuePair[] = [];

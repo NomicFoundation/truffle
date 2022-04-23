@@ -7,9 +7,17 @@ const yargs = require("yargs");
 const input = process.argv[2].split(" -- ");
 const inputStrings = input[1];
 
+// we need to make sure this function exists so ensjs doesn't complain as it requires
+// getRandomValues for some functionalities - webpack strips out the crypto lib
+// so we shim it here
+global.crypto = {
+  getRandomValues: require("get-random-values")
+};
+
 //detect config so we can get the provider and resolver without having to serialize
 //and deserialize them
-const detectedConfig = Config.detect({ network: yargs(input[0]).argv.network });
+const { network, config } = yargs(input[0]).argv;
+const detectedConfig = Config.detect({ network, config });
 const customConfig = detectedConfig.networks.develop || {};
 
 //need host and port for provider url
@@ -29,15 +37,12 @@ detectedConfig.networks.develop = {
   }
 };
 
-// enable Truffle to run both from the bundles out of packages/dist
-// and using the raw JS directly - we inject BUNDLE_VERSION when building
-const command =
-  typeof BUNDLE_VERSION !== "undefined"
-    ? new Command(require("./commands.bundled.js"))
-    : new Command(require("./commands"));
+const command = new Command(require("./commands"));
 
-command.run(inputStrings, detectedConfig, error => {
-  if (error) {
+command
+  .run(inputStrings, detectedConfig)
+  .then(() => process.exit(0))
+  .catch(error => {
     // Perform error handling ourselves.
     if (error instanceof TruffleError) {
       console.log(error.message);
@@ -46,6 +51,4 @@ command.run(inputStrings, detectedConfig, error => {
       console.log(error.stack || error.toString());
     }
     process.exit(1);
-  }
-  process.exit(0);
-});
+  });

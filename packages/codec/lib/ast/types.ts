@@ -1,4 +1,4 @@
-import * as Common from "@truffle/codec/common";
+import type * as Common from "@truffle/codec/common";
 
 export interface TypeDescriptions {
   typeIdentifier: string;
@@ -13,8 +13,10 @@ export interface AstNode {
   canonicalName?: string;
   linearizedBaseContracts?: number[];
   members?: AstNode[];
+  underlyingType?: AstNode;
   nodes?: AstNode[];
   nodeType: string;
+  ast_type?: string; //HACK: Vyper equivalent of nodeType
   scope?: number;
   src: string;
   stateVariable?: boolean;
@@ -52,6 +54,7 @@ export interface AstNode {
   anonymous?: boolean;
   contractKind?: Common.ContractKind;
   isConstructor?: boolean;
+  usedErrors?: number[];
   //Note: May need to add more in the future.
   //May also want to create a proper system of AstNode types
   //in the future, but sticking with this for now.

@@ -13,6 +13,8 @@ const fse = require("fs-extra");
 const path = require("path");
 const EventEmitter = require("events");
 const spawnSync = require("child_process").spawnSync;
+const Require = require("@truffle/require");
+const debug = require("debug")("console");
 
 const processInput = input => {
   const inputComponents = input.trim().split(" ");
@@ -58,30 +60,133 @@ class Console extends EventEmitter {
     });
   }
 
-  start() {
+  async start() {
     try {
+      // start the repl with an empty prompt and show a proper one when
+      // the repl has set up its context and is ready to accept input
       this.repl = repl.start({
-        prompt: "truffle(" + this.options.network + ")> ",
+        prompt: "",
         eval: this.interpret.bind(this)
       });
 
-      this.interfaceAdapter.getAccounts().then(fetchedAccounts => {
-        this.repl.context.web3 = this.web3;
-        this.repl.context.interfaceAdapter = this.interfaceAdapter;
-        this.repl.context.accounts = fetchedAccounts;
+      // Get and set Truffle and User Globals
+      const truffleAndUserGlobals = await this.calculateTruffleAndUserGlobals();
+      Object.entries(truffleAndUserGlobals).forEach(([key, value]) => {
+        this.repl.context[key] = value;
       });
+
+      // repl is ready - set and display prompt
+      this.repl.setPrompt("truffle(" + this.options.network + ")> ");
+      this.repl.displayPrompt();
+
+      // hydrate the environment with the user's contracts
       this.provision();
 
-      //want repl to exit when it receives an exit command
       this.repl.on("exit", () => {
         process.exit();
       });
+
+      // ensure that `await`-ing this method never resolves. (we want to keep
+      // the console open until it exits on its own)
+      return new Promise(() => {});
     } catch (error) {
       this.options.logger.log(
-        "Unexpected error: Cannot provision contracts while instantiating the console."
+        "Unexpected error setting up the environment or provisioning " +
+          "contracts while instantiating the console."
       );
       this.options.logger.log(error.stack || error.message || error);
     }
+  }
+
+  getUserDefinedGlobals({ accounts, interfaceAdapter, web3 }) {
+    // exit if feature should be disabled
+    if (this.options["require-none"]) return;
+
+    // exit if no hydrate options are set
+    if (
+      (!this.options.console || !this.options.console.require) &&
+      !this.options.require &&
+      !this.options.r
+    )
+      return;
+
+    const addToContext = (context, userData, namespace) => {
+      for (const key in userData) {
+        if (namespace) {
+          if (typeof context[namespace] === "undefined") {
+            context[namespace] = {};
+          }
+          context[namespace][key] = userData[key];
+        } else {
+          context[key] = userData[key];
+        }
+      }
+    };
+    const errorMessage =
+      "You must specify the console.require property as " +
+      "either a string or an array. If you specify an array, its members " +
+      "must be paths or objects containing at least a `path` property.";
+
+    const requireValue =
+      this.options.r || this.options.require || this.options.console.require;
+
+    // Require allows us to inject Truffle variables into the script's scope
+    const requireOptions = {
+      context: {
+        accounts,
+        interfaceAdapter,
+        web3
+      }
+    };
+    const userGlobals = {};
+    if (typeof requireValue === "string") {
+      requireOptions.file = requireValue;
+      addToContext(userGlobals, Require.file(requireOptions));
+    } else if (Array.isArray(requireValue)) {
+      this.options.console.require.forEach(item => {
+        if (typeof item === "string") {
+          requireOptions.file = item;
+          addToContext(userGlobals, Require.file(requireOptions));
+        } else if (typeof item === "object" && item.path) {
+          requireOptions.file = item.path;
+          addToContext(userGlobals, Require.file(requireOptions), item.as);
+        } else {
+          throw new Error(errorMessage);
+        }
+      });
+    } else {
+      throw new Error(errorMessage);
+    }
+    return userGlobals;
+  }
+
+  async calculateTruffleAndUserGlobals() {
+    let accounts;
+    try {
+      accounts = await this.interfaceAdapter.getAccounts();
+    } catch {
+      // don't prevent Truffle from working if user doesn't provide some way
+      // to sign transactions (e.g. no reason to disallow debugging)
+      accounts = [];
+    }
+
+    const userGlobals = this.getUserDefinedGlobals({
+      web3: this.web3,
+      interfaceAdapter: this.interfaceAdapter,
+      accounts
+    });
+
+    const truffleGlobals = {
+      web3: this.web3,
+      interfaceAdapter: this.interfaceAdapter,
+      accounts
+    };
+
+    // we insert user variables first so as to not clobber Truffle's
+    return {
+      ...userGlobals,
+      ...truffleGlobals
+    };
   }
 
   provision() {
@@ -138,8 +243,9 @@ class Console extends EventEmitter {
     });
   }
 
-  runSpawn(inputStrings, options, callback) {
+  runSpawn(inputStrings, options) {
     let childPath;
+    /* eslint-disable no-undef */
     if (typeof BUNDLE_CONSOLE_CHILD_FILENAME !== "undefined") {
       childPath = path.join(__dirname, BUNDLE_CONSOLE_CHILD_FILENAME);
     } else {
@@ -150,20 +256,28 @@ class Console extends EventEmitter {
     // errors/warnings in child process - specifically the error re: having
     // multiple config files
     const spawnOptions = { stdio: ["inherit", "inherit", "pipe"] };
+    const settings = ["config", "network"]
+      .filter(setting => options[setting])
+      .map(setting => `--${setting} ${options[setting]}`)
+      .join(" ");
 
-    const spawnInput = "--network " + options.network + " -- " + inputStrings;
-    try {
-      spawnSync(
-        "node",
-        ["--no-deprecation", childPath, spawnInput],
-        spawnOptions
-      );
+    const spawnInput = `${settings} -- ${inputStrings}`;
 
-      // re-provision to ensure any changes are available in the repl
-      this.provision();
-    } catch (err) {
-      callback(err);
+    const spawnResult = spawnSync(
+      "node",
+      ["--no-deprecation", childPath, spawnInput],
+      spawnOptions
+    );
+
+    if (spawnResult.stderr) {
+      // Theoretically stderr can contain multiple errors.
+      // So let's just print it instead of throwing through
+      // the error handling mechanism. Bad call?
+      debug(spawnResult.stderr.toString());
     }
+
+    // re-provision to ensure any changes are available in the repl
+    this.provision();
 
     //display prompt when child repl process is finished
     this.repl.displayPrompt();
@@ -174,28 +288,28 @@ class Console extends EventEmitter {
     if (
       this.command.getCommand(processedInput, this.options.noAliases) != null
     ) {
-      return this.runSpawn(processedInput, this.options, error => {
-        if (error) {
-          // Perform error handling ourselves.
-          if (error instanceof TruffleError) {
-            console.log(error.message);
-          } else {
-            // Bubble up all other unexpected errors.
-            console.log(error.stack || error.toString());
-          }
-          return callback();
+      try {
+        this.runSpawn(processedInput, this.options);
+      } catch (error) {
+        // Perform error handling ourselves.
+        if (error instanceof TruffleError) {
+          console.log(error.message);
+        } else {
+          // Bubble up all other unexpected errors.
+          console.log(error.stack || error.toString());
         }
+        return callback();
+      }
 
-        // Reprovision after each command as it may change contracts.
-        try {
-          this.provision();
-          callback();
-        } catch (error) {
-          // Don't pass abstractions to the callback if they're there or else
-          // they'll get printed in the repl.
-          callback(error);
-        }
-      });
+      // Reprovision after each command as it may change contracts.
+      try {
+        this.provision();
+        return callback();
+      } catch (error) {
+        // Don't pass abstractions to the callback if they're there or else
+        // they'll get printed in the repl.
+        return callback(error);
+      }
     }
 
     // Much of the following code is from here, though spruced up:
@@ -209,7 +323,8 @@ class Console extends EventEmitter {
       - this is overly restrictive but is easier to maintain
     - capture `await <anything that follows it>`
     */
-    let includesAwait = /^\s*((?:(?:var|const|let)\s+)?[a-zA-Z_$][0-9a-zA-Z_$]*\s*=\s*)?(\(?\s*await[\s\S]*)/;
+    let includesAwait =
+      /^\s*((?:(?:var|const|let)\s+)?[a-zA-Z_$][0-9a-zA-Z_$]*\s*=\s*)?(\(?\s*await[\s\S]*)/;
 
     const match = processedInput.match(includesAwait);
     let source = processedInput;

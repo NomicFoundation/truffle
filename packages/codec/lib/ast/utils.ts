@@ -1,12 +1,12 @@
 import debugModule from "debug";
 const debug = debugModule("codec:ast:utils");
 
+import type * as Abi from "@truffle/abi-utils";
 import * as Common from "@truffle/codec/common";
-import * as AbiData from "@truffle/codec/abi-data/types";
 
-import { AstNode, AstNodes, Scopes } from "./types";
+import type { AstNode, AstNodes, Scopes } from "./types";
 import BN from "bn.js";
-import cloneDeep from "lodash.clonedeep";
+import cloneDeep from "lodash/cloneDeep";
 
 /** @category Definition Reading */
 export function typeIdentifier(definition: AstNode): string {
@@ -216,6 +216,8 @@ export function contractKind(definition: AstNode): Common.ContractKind {
 
 /**
  * stack size, in words, of a given type
+ * note: this function assumes that UDVTs only ever take up
+ * a single word, which is currently true
  * @category Definition Reading
  */
 export function stackSize(definition: AstNode): number {
@@ -305,9 +307,8 @@ export function baseDefinition(definition: AstNode): AstNode {
   }
 
   //otherwise, we'll have to spoof it up ourselves
-  let baseIdentifier = typeIdentifier(definition).match(
-    /^t_array\$_(.*)_\$/
-  )[1];
+  let baseIdentifier =
+    typeIdentifier(definition).match(/^t_array\$_(.*)_\$/)[1];
   //greedy match to extract everything from first to last dollar sign
 
   // HACK - internal types for memory or storage also seem to be pointers
@@ -480,6 +481,18 @@ export function functionKind(node: AstNode): string | undefined {
   return node.name === "" ? "fallback" : "function";
 }
 
+//this is kind of a weird one, it exposes some Solidity internals.
+//for internal functions it'll return "internal".
+//for external functions it'll return "external".
+//for library functions it'll return "delegatecall".
+//and for builtin functions, it'll return an internal name for
+//that particular builtin function.
+//(there are more possibilities but I'm not going to list them all here)
+export function functionClass(node: AstNode): string | undefined {
+  const match = typeIdentifier(node).match(/^t_function_([^_]+)_/);
+  return match ? match[1] : undefined;
+}
+
 /**
  * similar compatibility function for mutability for pre-0.4.16 versions
  * returns undefined if you don't give it a FunctionDefinition or
@@ -531,7 +544,7 @@ export function isContractPayable(definition: AstNode): boolean {
 export function definitionToAbi(
   node: AstNode,
   referenceDeclarations: AstNodes
-): AbiData.AbiEntry | undefined {
+): Abi.Entry | undefined {
   switch (node.nodeType) {
     case "FunctionDefinition":
       if (node.visibility === "public" || node.visibility === "external") {
@@ -541,6 +554,8 @@ export function definitionToAbi(
       }
     case "EventDefinition":
       return eventDefinitionToAbi(node, referenceDeclarations);
+    case "ErrorDefinition":
+      return errorDefinitionToAbi(node, referenceDeclarations);
     case "VariableDeclaration":
       if (node.visibility === "public") {
         return getterDefinitionToAbi(node, referenceDeclarations);
@@ -557,14 +572,13 @@ function functionDefinitionToAbi(
   node: AstNode,
   referenceDeclarations: AstNodes
 ):
-  | AbiData.FunctionAbiEntry
-  | AbiData.ConstructorAbiEntry
-  | AbiData.FallbackAbiEntry
-  | AbiData.ReceiveAbiEntry {
+  | Abi.FunctionEntry
+  | Abi.ConstructorEntry
+  | Abi.FallbackEntry
+  | Abi.ReceiveEntry {
   let kind = functionKind(node);
   let stateMutability = mutability(node);
   let payable = stateMutability === "payable";
-  let constant = stateMutability === "view" || stateMutability == "pure";
   let inputs;
   switch (kind) {
     case "function":
@@ -582,9 +596,7 @@ function functionDefinitionToAbi(
         name,
         inputs,
         outputs,
-        stateMutability,
-        constant,
-        payable
+        stateMutability
       };
     case "constructor":
       inputs = parametersToAbi(
@@ -592,7 +604,7 @@ function functionDefinitionToAbi(
         referenceDeclarations
       );
       //note: need to coerce because of mutability restrictions
-      return <AbiData.ConstructorAbiEntry>{
+      return <Abi.ConstructorEntry>{
         type: "constructor",
         inputs,
         stateMutability,
@@ -600,14 +612,14 @@ function functionDefinitionToAbi(
       };
     case "fallback":
       //note: need to coerce because of mutability restrictions
-      return <AbiData.FallbackAbiEntry>{
+      return <Abi.FallbackEntry>{
         type: "fallback",
         stateMutability,
         payable
       };
     case "receive":
       //note: need to coerce because of mutability restrictions
-      return <AbiData.ReceiveAbiEntry>{
+      return <Abi.ReceiveEntry>{
         type: "receive",
         stateMutability,
         payable
@@ -615,14 +627,17 @@ function functionDefinitionToAbi(
   }
 }
 
+interface EventParameterNode extends AstNode {
+  indexed: boolean;
+}
+
 function eventDefinitionToAbi(
   node: AstNode,
   referenceDeclarations: AstNodes
-): AbiData.EventAbiEntry {
-  let inputs = parametersToAbi(
-    node.parameters.parameters,
-    referenceDeclarations,
-    true
+): Abi.EventEntry {
+  let inputs = parametersToAbi<EventParameterNode>(
+    node.parameters.parameters as EventParameterNode[],
+    referenceDeclarations
   );
   let name = node.name;
   let anonymous = node.anonymous;
@@ -634,14 +649,31 @@ function eventDefinitionToAbi(
   };
 }
 
-function parametersToAbi(
-  nodes: AstNode[],
-  referenceDeclarations: AstNodes,
-  checkIndexed: boolean = false
-): AbiData.AbiParameter[] {
-  return nodes.map(node =>
-    parameterToAbi(node, referenceDeclarations, checkIndexed)
+function errorDefinitionToAbi(
+  node: AstNode,
+  referenceDeclarations: AstNodes
+): Abi.ErrorEntry {
+  let inputs = parametersToAbi(
+    node.parameters.parameters,
+    referenceDeclarations
   );
+  let name = node.name;
+  return {
+    type: "error",
+    inputs,
+    name
+  };
+}
+
+type Parameter<N extends AstNode> = "indexed" extends keyof N
+  ? Abi.EventParameter
+  : Abi.Parameter;
+
+function parametersToAbi<N extends AstNode>(
+  nodes: N[],
+  referenceDeclarations: AstNodes
+): Parameter<N>[] {
+  return nodes.map(node => parameterToAbi(node, referenceDeclarations));
 }
 
 //NOTE: This function is only for types that could potentially go in the ABI!
@@ -651,30 +683,33 @@ function parametersToAbi(
 //this that *actually* go in the ABI
 //if you want to expand it to handle those (by throwing an exception, say),
 //you'll need to give it a way to detect circularities
-function parameterToAbi(
-  node: AstNode,
-  referenceDeclarations: AstNodes,
-  checkIndexed: boolean = false
-): AbiData.AbiParameter {
+function parameterToAbi<N extends AstNode>(
+  node: N,
+  referenceDeclarations: AstNodes
+): Parameter<N> {
   let name = node.name; //may be the empty string... or even undefined for a base type
-  let components: AbiData.AbiParameter[];
-  let indexed: boolean;
-  if (checkIndexed) {
-    indexed = node.indexed; //note: may be undefined for a base type
-  }
+  let components: Abi.Parameter[];
   let internalType: string = typeStringWithoutLocation(node);
   //is this an array? if so use separate logic
   if (typeClass(node) === "array") {
     let baseType = node.typeName ? node.typeName.baseType : node.baseType;
-    let baseAbi = parameterToAbi(baseType, referenceDeclarations, checkIndexed);
+    let baseAbi = parameterToAbi(baseType, referenceDeclarations);
     let arraySuffix = isDynamicArray(node) ? `[]` : `[${staticLength(node)}]`;
-    return {
+    const parameter: Abi.Parameter = {
       name,
       type: baseAbi.type + arraySuffix,
-      indexed,
       components: baseAbi.components,
       internalType
     };
+
+    if ("indexed" in node) {
+      return {
+        ...parameter,
+        indexed: node.indexed
+      } as Parameter<N>;
+    } else {
+      return parameter as Parameter<N>;
+    }
   }
   let abiTypeString = toAbiType(node, referenceDeclarations);
   //otherwise... is it a struct? if so we need to populate components
@@ -690,17 +725,25 @@ function parameterToAbi(
     }
     components = parametersToAbi(
       referenceDeclaration.members,
-      referenceDeclarations,
-      checkIndexed
+      referenceDeclarations
     );
   }
-  return {
+
+  const parameter: Abi.Parameter = {
     name, //may be empty string but should only be undefined in recursive calls
     type: abiTypeString,
-    indexed, //undefined if !checkedIndex
     components, //undefined if not a struct or (multidim) array of structs
     internalType
   };
+
+  if ("indexed" in node) {
+    return {
+      ...parameter,
+      indexed: node.indexed
+    } as Parameter<N>;
+  } else {
+    return parameter as Parameter<N>;
+  }
 }
 
 //note: this is only meant for non-array types that can go in the ABI
@@ -714,19 +757,33 @@ function toAbiType(node: AstNode, referenceDeclarations: AstNodes): string {
       return "address";
     case "struct":
       return "tuple"; //the more detailed checking will be handled elsewhere
-    case "enum":
-      let referenceId = typeId(node);
-      let referenceDeclaration = referenceDeclarations[referenceId];
+    case "enum": {
+      const referenceId = typeId(node);
+      const referenceDeclaration = referenceDeclarations[referenceId];
       if (referenceDeclaration === undefined) {
-        let typeToDisplay = typeString(node);
+        const typeToDisplay = typeString(node);
         throw new Common.UnknownUserDefinedTypeError(
           referenceId.toString(),
           typeToDisplay
         );
       }
-      let numOptions = referenceDeclaration.members.length;
-      let bits = 8 * Math.ceil(Math.log2(numOptions) / 8);
+      const numOptions = referenceDeclaration.members.length;
+      const bits = 8 * Math.ceil(Math.log2(numOptions) / 8);
       return `uint${bits}`;
+    }
+    case "userDefinedValueType": {
+      const referenceId = typeId(node);
+      const referenceDeclaration = referenceDeclarations[referenceId];
+      if (referenceDeclaration === undefined) {
+        const typeToDisplay = typeString(node);
+        throw new Common.UnknownUserDefinedTypeError(
+          referenceId.toString(),
+          typeToDisplay
+        );
+      }
+      const underlyingType = referenceDeclaration.underlyingType;
+      return toAbiType(underlyingType, referenceDeclarations);
+    }
     default:
       return basicType;
     //note that: int/uint/fixed/ufixed/bytes will have their size and such left on;
@@ -741,7 +798,7 @@ function toAbiType(node: AstNode, referenceDeclarations: AstNodes): string {
 function getterDefinitionToAbi(
   node: AstNode,
   referenceDeclarations: AstNodes
-): AbiData.FunctionAbiEntry {
+): Abi.FunctionEntry {
   debug("getter node: %O", node);
   let name = node.name;
   let { inputs, outputs } = getterParameters(node, referenceDeclarations);
@@ -752,9 +809,7 @@ function getterDefinitionToAbi(
     name,
     inputs: inputsAbi,
     outputs: outputsAbi,
-    stateMutability: "view",
-    constant: true,
-    payable: false
+    stateMutability: "view"
   };
 }
 

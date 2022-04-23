@@ -1,4 +1,4 @@
-import { Bytecode, CompiledContract, LinkReference } from "../types";
+import type { Bytecode, CompiledContract, LinkReference } from "../types";
 
 export function forContracts(contracts: any[]): CompiledContract[] {
   // convert to list
@@ -24,7 +24,8 @@ export function forContract(contract: any): CompiledContract {
     userdoc,
     immutableReferences,
     generatedSources,
-    deployedGeneratedSources
+    deployedGeneratedSources,
+    db
   } = contract;
 
   return {
@@ -44,7 +45,8 @@ export function forContract(contract: any): CompiledContract {
     userdoc,
     immutableReferences,
     generatedSources,
-    deployedGeneratedSources
+    deployedGeneratedSources,
+    db
   };
 }
 

@@ -1,15 +1,19 @@
-var assert = require("chai").assert;
-var BigNumber = require("bignumber.js");
-var util = require("./util");
+const assert = require("chai").assert;
+const BigNumber = require("bignumber.js");
+const util = require("./util");
 
 describe("Methods", function () {
-  var Example;
-  var accounts;
-  var web3;
-  var providerOptions = { vmErrorsOnRPCResponse: false };
+  let Example;
+  let accounts;
+  let web3;
 
   before(async function () {
     this.timeout(10000);
+    const providerOptions = {
+      miner: {
+        instamine: "strict"
+      }
+    };
 
     Example = await util.createExample();
 
@@ -287,6 +291,16 @@ describe("Methods", function () {
       Example.numberFormat = "BigNumber";
     });
 
+    it("should output int values as BigInt when set to 'BigInt' (call)", async function () {
+      let value;
+      Example.numberFormat = "BigInt";
+      const example = await Example.new(1);
+
+      value = await example.returnsInt();
+      assert(typeof value === "bigint");
+      Example.numberFormat = "BigNumber";
+    });
+
     it("should emit a transaction hash", function (done) {
       Example.new(5).then(function (instance) {
         instance.setValue(25).on("transactionHash", function (hash) {
@@ -346,7 +360,7 @@ describe("Methods", function () {
       assert.equal(hash, helloHash);
       assert.equal(parseInt(value), 5, "Ending value should be five");
 
-      goodbyeHash = web3.utils.soliditySha3("goodbye");
+      const goodbyeHash = web3.utils.soliditySha3("goodbye");
       await example.methods["overloadedSet(bytes32,uint256,uint256)"](
         goodbyeHash,
         5,
@@ -407,9 +421,7 @@ describe("Methods", function () {
         await example.setValue(10, { gas: 10 });
         assert.fail();
       } catch (e) {
-        const errorCorrect =
-          e.message.includes("exceeds gas limit") ||
-          e.message.includes("intrinsic gas too low");
+        const errorCorrect = e.message.includes("intrinsic gas too low");
 
         assert(errorCorrect, "Should OOG");
       }
@@ -421,7 +433,6 @@ describe("Methods", function () {
           .setValue(10, { gas: 10 })
           .on("error", e => {
             const errorCorrect =
-              e.message.includes("exceeds gas limit") ||
               e.message.includes("intrinsic gas too low");
 
             assert(errorCorrect, "Should OOG");

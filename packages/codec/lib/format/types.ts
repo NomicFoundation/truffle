@@ -1,3 +1,12 @@
+/**
+ * Contains the types for type objects, and some
+ * functions for working with them.
+ *
+ * @category Main Format
+ *
+ * @packageDocumentation
+ */
+
 import debugModule from "debug";
 const debug = debugModule("codec:format:types");
 
@@ -14,8 +23,9 @@ const debug = debugModule("codec:format:types");
 //ALSO NOTE: IDs are strings even though they're currently numeric because
 //that might change in the future.
 
-import BN from "bn.js";
-import { ContractKind, Location, Mutability } from "@truffle/codec/common";
+import type BN from "bn.js";
+import type { ContractKind, Location, Mutability } from "@truffle/codec/common";
+import type { CompilerVersion } from "@truffle/codec/compiler";
 
 /**
  * Object representing a type
@@ -36,10 +46,12 @@ export type Type =
   | FunctionType
   | StructType
   | EnumType
+  | UserDefinedValueTypeType
   | ContractType
   | MagicType
   | TypeType
-  | TupleType;
+  | TupleType
+  | OptionsType;
 
 /**
  * Type of an unsigned integer
@@ -217,7 +229,40 @@ export type ElementaryType =
   | AddressType
   | StringType
   | EnumType
+  | UserDefinedValueTypeType
   | ContractType;
+
+/**
+ * Types that can underlie a user-defined value type
+ *
+ * @Category General categories
+ */
+export type BuiltInValueType =
+  | UintType
+  | IntType
+  | BoolType
+  | BytesTypeStatic
+  | FixedType
+  | UfixedType
+  | AddressTypeSpecific; //UDVTs only exist on 0.8.8 and later
+
+/**
+ * Types that can go in the ABI
+ *
+ * @Category General categories
+ */
+export type AbiType =
+  | UintType
+  | IntType
+  | BoolType
+  | BytesType
+  | AddressTypeGeneral
+  | FixedType
+  | UfixedType
+  | StringType
+  | ArrayType
+  | FunctionExternalTypeGeneral
+  | TupleType;
 
 /**
  * Type of a mapping
@@ -294,7 +339,11 @@ export interface FunctionExternalTypeGeneral {
  *
  * @Category General categories
  */
-export type ContractDefinedType = StructTypeLocal | EnumTypeLocal;
+export type ContractDefinedType =
+  | StructTypeLocal
+  | EnumTypeLocal
+  | UserDefinedValueTypeTypeLocal;
+
 /**
  * User-defined types
  *
@@ -304,7 +353,8 @@ export type UserDefinedType =
   | ContractDefinedType
   | ContractTypeNative
   | StructTypeGlobal
-  | EnumTypeGlobal;
+  | EnumTypeGlobal
+  | UserDefinedValueTypeTypeGlobal;
 
 /**
  * Type of a struct
@@ -477,6 +527,49 @@ export interface ContractTypeForeign {
   //now
 }
 
+/**
+ * Type of a user-defined value type
+ *
+ * These may be local (defined in a contract) or global (defined outside of any contract)
+ *
+ * @Category User-defined elementary types
+ */
+export type UserDefinedValueTypeType = UserDefinedValueTypeTypeLocal | UserDefinedValueTypeTypeGlobal;
+
+/**
+ * Local UDVT (defined in a contract)
+ *
+ * @Category User-defined elementary types
+ */
+export interface UserDefinedValueTypeTypeLocal {
+  typeClass: "userDefinedValueType";
+  kind: "local";
+  /**
+   * Internal ID.  Format may change in future.
+   */
+  id: string;
+  typeName: string;
+  definingContractName: string;
+  definingContract?: ContractTypeNative;
+  underlyingType?: BuiltInValueType;
+}
+
+/**
+ * Global UDVT (defined outside a contract)
+ *
+ * @Category User-defined elementary types
+ */
+export interface UserDefinedValueTypeTypeGlobal {
+  typeClass: "userDefinedValueType";
+  kind: "global";
+  /**
+   * Internal ID.  Format may change in future.
+   */
+  id: string;
+  typeName: string;
+  underlyingType?: BuiltInValueType;
+}
+
 export type MagicVariableName = "message" | "block" | "transaction";
 
 /**
@@ -527,6 +620,16 @@ export interface TypeTypeEnum {
 }
 
 /**
+ * Fictitious type used for a transaction options argument
+ * (e.g. value, from, etc).
+ *
+ * @Category Special types (encoder-only)
+ */
+export interface OptionsType {
+  typeClass: "options";
+}
+
+/**
  * Reference types
  *
  * @Category General categories
@@ -542,8 +645,24 @@ export interface TypesById {
   [id: string]: UserDefinedType;
 }
 
+export interface TypesByCompilationAndId {
+  [compilationId: string]: {
+    compiler: CompilerVersion;
+    types: TypesById;
+  };
+}
+
+export function forgetCompilations(
+  typesByCompilation: TypesByCompilationAndId
+): TypesById {
+  return Object.assign(
+    {},
+    ...Object.values(typesByCompilation).map(({ types }) => types)
+  );
+}
+
 function isUserDefinedType(anyType: Type): anyType is UserDefinedType {
-  const userDefinedTypes = ["contract", "enum", "struct"];
+  const userDefinedTypes = ["contract", "enum", "struct", "userDefinedValueType"];
   return userDefinedTypes.includes(anyType.typeClass);
 }
 
@@ -689,6 +808,16 @@ export function typeStringWithoutLocation(dataType: Type): string {
         case "global":
           return `${dataType.typeClass} ${dataType.typeName}`;
       }
+      break; //to satisfy TS :P
+    case "userDefinedValueType":
+      //differs from struct & enum in that typeClass is omitted
+      switch (dataType.kind) {
+        case "local":
+          return `${dataType.definingContractName}.${dataType.typeName}`;
+        case "global":
+          return `${dataType.typeName}`;
+      }
+      break; //to satisfy TS :P
     case "tuple":
       return (
         dataType.typeHint ||
@@ -734,12 +863,16 @@ export function typeStringWithoutLocation(dataType: Type): string {
       let inputString = `function(${inputList})`;
       let outputString = outputList === "" ? "" : ` returns (${outputList})`; //again, note the deliberate space
       return inputString + mutabilityString + visibilityString + outputString;
+    case "options":
+      //note: not a real Solidity type! just for error messaging!
+      return "options";
   }
 }
 
 export function isContractDefinedType(
   anyType: Type
 ): anyType is ContractDefinedType {
-  const contractDefinedTypes = ["enum", "struct"];
-  return contractDefinedTypes.includes(anyType.typeClass);
+  const contractDefinedTypes = ["enum", "struct", "userDefinedValueType"];
+  return contractDefinedTypes.includes(anyType.typeClass)
+    && (<EnumType|StructType|UserDefinedValueTypeType>anyType).kind === "local";
 }

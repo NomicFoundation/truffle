@@ -7,8 +7,9 @@ import { prefixName, isDeliberatelySkippedNodeType } from "lib/helpers";
 
 import * as trace from "lib/trace/sagas";
 import * as data from "lib/data/sagas";
+import * as txlog from "lib/txlog/sagas";
 import * as evm from "lib/evm/sagas";
-import * as solidity from "lib/solidity/sagas";
+import * as sourcemapping from "lib/sourcemapping/sagas";
 import * as stacktrace from "lib/stacktrace/sagas";
 
 import * as actions from "../actions";
@@ -21,7 +22,8 @@ const STEP_SAGAS = {
   [actions.STEP_OVER]: stepOver,
   [actions.STEP_INTO]: stepInto,
   [actions.STEP_OUT]: stepOut,
-  [actions.CONTINUE]: continueUntilBreakpoint
+  [actions.CONTINUE]: continueUntilBreakpoint,
+  [actions.RUN_TO_END]: runToEnd
 };
 
 export function* saga() {
@@ -45,7 +47,7 @@ export function* saga() {
 
 export default prefixName("controller", saga);
 
-/*
+/**
  * Advance the state by the given number of instructions (but not past the end)
  * (if no count given, advance 1)
  */
@@ -76,6 +78,7 @@ function* advance(action) {
  */
 function* stepNext() {
   const starting = yield select(controller.current.location);
+  const allowInternal = yield select(controller.stepIntoInternalSources);
 
   let upcoming, finished;
 
@@ -92,13 +95,17 @@ function* stepNext() {
   } while (
     !finished &&
     (!upcoming ||
-      (upcoming.source.internal && !starting.source.internal) ||
-      !upcoming.node ||
-      isDeliberatelySkippedNodeType(upcoming.node) ||
+      //don't stop on an internal source unless allowInternal is on or
+      //we started in an internal source
+      (!allowInternal &&
+        upcoming.source.internal &&
+        !starting.source.internal) ||
+      upcoming.sourceRange.length === 0 ||
+      upcoming.source.id === undefined ||
+      (upcoming.node && isDeliberatelySkippedNodeType(upcoming.node)) ||
       (upcoming.sourceRange.start === starting.sourceRange.start &&
         upcoming.sourceRange.length === starting.sourceRange.length &&
-        upcoming.source.id === starting.source.id &&
-        upcoming.source.compilationId === starting.source.compilationId))
+        upcoming.source.id === starting.source.id))
   );
 }
 
@@ -138,8 +145,6 @@ function* stepInto() {
     // the function stack has not increased,
     currentDepth <= startingDepth &&
     // we haven't changed files,
-    currentLocation.source.compilationId ===
-      startingLocation.source.compilationId &&
     currentLocation.source.id === startingLocation.source.id &&
     //and we haven't changed lines
     currentLocation.sourceRange.lines.start.line ===
@@ -202,11 +207,21 @@ function* stepOver() {
     // line (which may be in a new file)
     (currentDepth > startingDepth ||
       (currentLocation.source.id === startingLocation.source.id &&
-        currentLocation.source.compilationId ===
-          startingLocation.source.compilationId &&
         currentLocation.sourceRange.lines.start.line ===
           startingLocation.sourceRange.lines.start.line))
   );
+}
+
+/**
+ * runToEnd - run the debugger till the end
+ */
+function* runToEnd() {
+  let finished;
+
+  do {
+    yield* advance();
+    finished = yield select(controller.current.trace.finished);
+  } while (!finished);
 }
 
 /**
@@ -224,22 +239,41 @@ function* continueUntilBreakpoint(action) {
   let breakpointHit = false;
 
   let currentLocation = yield select(controller.current.location);
-  let currentLine = currentLocation.sourceRange.lines.start.line;
   let currentSourceId = currentLocation.source.id;
-  let currentCompilationId = currentLocation.source.compilationId;
+  let currentLine = currentLocation.sourceRange.lines.start.line;
+  let currentStart = currentLocation.sourceRange.start;
+  let currentLength = currentLocation.sourceRange.start;
+  //note that if allow internal is on, we don't turn on the special treatment
+  //of user sources even if we started in one
+  const startedInUserSource =
+    !(yield select(controller.stepIntoInternalSources)) &&
+    currentLocation.source.id !== undefined &&
+    !currentLocation.source.internal;
+  //the following are set regardless, but only used if startedInUserSource
+  let lastUserSourceId = currentSourceId;
+  let lastUserLine = currentLine;
+  let lastUserStart = currentStart;
+  let lastUserLength = currentLength;
 
   do {
     yield* advance(); //note: this avoids using stepNext in order to
     //allow breakpoints in internal sources to work properly
 
-    //note these two have not been updated yet; they'll be updated a
+    //note these three have not been updated yet; they'll be updated a
     //few lines down.  but at this point these are still the previous
     //values.
     let previousLine = currentLine;
+    let previousStart = currentStart;
+    let previousLength = currentLength;
     let previousSourceId = currentSourceId;
+    if (!currentLocation.source.internal) {
+      lastUserSourceId = currentSourceId;
+      lastUserLine = currentLine;
+      lastUserStart = currentStart;
+      lastUserLength = currentLength;
+    }
 
     currentLocation = yield select(controller.current.location);
-    debug("currentLocation: %O", currentLocation);
     let finished = yield select(controller.current.trace.finished);
     if (finished) {
       break; //can break immediately if finished
@@ -249,26 +283,41 @@ function* continueUntilBreakpoint(action) {
     if (currentSourceId === undefined) {
       continue; //never stop on an unmapped instruction
     }
-    currentCompilationId = currentLocation.source.compilationId;
-    let currentNode = currentLocation.node.id;
     currentLine = currentLocation.sourceRange.lines.start.line;
+    currentStart = currentLocation.sourceRange.start;
+    currentLength = currentLocation.sourceRange.length;
 
     breakpointHit =
-      breakpoints.filter(({ sourceId, compilationId, line, node }) => {
-        if (node !== undefined) {
+      breakpoints.filter(({ sourceId, line, start, length }) => {
+        if (start !== undefined && length !== undefined) {
+          //node-based (well, source-range-based) breakpoint
           return (
-            compilationId === currentCompilationId &&
             sourceId === currentSourceId &&
-            node === currentNode
+            start === currentStart &&
+            length === currentLength &&
+            (currentSourceId !== previousSourceId ||
+              currentStart !== previousStart ||
+              currentLength !== previousLength) &&
+            //if we started in a user source (& allow internal is off),
+            //we need to make sure we've moved from a user-source POV
+            (!startedInUserSource ||
+              currentSourceId !== lastUserSourceId ||
+              currentStart !== lastUserStart ||
+              currentLength !== lastUserLength)
           );
         }
         //otherwise, we have a line-style breakpoint; we want to stop at the
         //*first* point on the line
         return (
-          compilationId === currentCompilationId &&
           sourceId === currentSourceId &&
           line === currentLine &&
-          (currentSourceId !== previousSourceId || currentLine !== previousLine)
+          (currentSourceId !== previousSourceId ||
+            currentLine !== previousLine) &&
+          //again, if started in a user source w/ allow internal off,
+          //need to make sure we've moved from a *user*-source POV
+          (!startedInUserSource ||
+            currentSourceId !== lastUserSourceId ||
+            currentLine !== lastUserLine)
         );
       }).length > 0;
   } while (!breakpointHit);
@@ -281,7 +330,8 @@ function* continueUntilBreakpoint(action) {
 export function* reset() {
   yield* data.reset();
   yield* evm.reset();
-  yield* solidity.reset();
+  yield* sourcemapping.reset();
   yield* trace.reset();
   yield* stacktrace.reset();
+  yield* txlog.reset();
 }

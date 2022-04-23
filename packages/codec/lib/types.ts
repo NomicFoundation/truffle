@@ -1,7 +1,10 @@
-import BN from "bn.js";
+import type BN from "bn.js";
+import type Big from "big.js";
 
-import * as AbiData from "@truffle/codec/abi-data/types";
-import * as Format from "@truffle/codec/format";
+import type * as Abi from "@truffle/abi-utils";
+import type * as Types from "@truffle/codec/format/types";
+import type * as Values from "@truffle/codec/format/values";
+import type { PaddingMode } from "@truffle/codec/common";
 
 /**
  * A type representing a transaction (calldata) decoding.  As you can see, these come in five types,
@@ -30,6 +33,7 @@ export type LogDecoding = EventDecoding | AnonymousDecoding;
  */
 export type ReturndataDecoding =
   | ReturnDecoding
+  | RawReturnDecoding
   | BytecodeDecoding
   | UnknownBytecodeDecoding
   | SelfDestructDecoding
@@ -60,11 +64,11 @@ export interface StateVariable {
    * Note that this class may differ from that of the contract being decoded, due
    * to inheritance.
    */
-  class: Format.Types.ContractType;
+  class: Types.ContractType;
   /**
    * The decoded value of the variable.  Note this is a Format.Values.Result, so it may be an error.
    */
-  value: Format.Values.Result;
+  value: Values.Result;
 }
 
 /**
@@ -80,7 +84,7 @@ export interface FunctionDecoding {
   /**
    * The class of contract that was called, as a Format.Types.ContractType.
    */
-  class: Format.Types.ContractType;
+  class: Types.ContractType;
   /**
    * The list of decoded arguments to the function.
    */
@@ -89,7 +93,7 @@ export interface FunctionDecoding {
    * The ABI entry for the function that was called.  You can use this
    * to extract the name, for instance.
    */
-  abi: AbiData.FunctionAbiEntry;
+  abi: Abi.FunctionEntry;
   /**
    * The selector for the function that was called, as a hexadecimal string.
    */
@@ -119,7 +123,7 @@ export interface ConstructorDecoding {
   /**
    * The class of contract being constructed, as a Format.Types.ContractType.
    */
-  class: Format.Types.ContractType;
+  class: Types.ContractType;
   /**
    * The list of decoded arguments to the constructor.  This will be empty for a
    * default constructor.
@@ -130,7 +134,7 @@ export interface ConstructorDecoding {
    * default constructors don't actually get an ABI entry, we still return an
    * ABI entry regardless in that case.
    */
-  abi: AbiData.ConstructorAbiEntry;
+  abi: Abi.ConstructorEntry;
   /**
    * The bytecode of the constructor that was called.
    */
@@ -157,12 +161,12 @@ export interface MessageDecoding {
   /**
    * The class of contract that was called, as a Format.Types.ContractType.
    */
-  class: Format.Types.ContractType;
+  class: Types.ContractType;
   /**
    * The ABI entry for the contract's fallback or receive function that would
    * handle this message; will be null if there is none.
    */
-  abi: AbiData.FallbackAbiEntry | AbiData.ReceiveAbiEntry | null;
+  abi: Abi.FallbackEntry | Abi.ReceiveEntry | null;
   /**
    * The data that was sent to the contract.
    */
@@ -234,12 +238,12 @@ export interface EventDecoding {
    * having emitted the event, but we decode it as if the library emitted the event, for clarity.
    * (The address of the contract the EVM thinks emitted the event can of course be found in the original log.)
    */
-  class: Format.Types.ContractType;
+  class: Types.ContractType;
   /**
    * The class of the contract that (according to this decoding) defined the event, as a Format.Types.ContractType.
    * May be omitted if we can't determine it, as may occur in ABI mode.
    */
-  definedIn?: Format.Types.ContractType;
+  definedIn?: Types.ContractType;
   /**
    * The list of decoded arguments to the event.
    */
@@ -248,7 +252,7 @@ export interface EventDecoding {
    * The ABI entry for the event.  You can use this to extract the name, for
    * instance.
    */
-  abi: AbiData.EventAbiEntry; //should be non-anonymous
+  abi: Abi.EventEntry; //should be non-anonymous
   /**
    * The selector for the event, as a hexadecimal string.
    */
@@ -276,12 +280,12 @@ export interface AnonymousDecoding {
    * having emitted the event, but we decode it as if the library emitted the event, for clarity.
    * (The address of the contract the EVM thinks emitted the event can of course be found in the original log.)
    */
-  class: Format.Types.ContractType;
+  class: Types.ContractType;
   /**
    * The class of the contract that (according to this decoding) defined the event, as a Format.Types.ContractType.
    * May be omitted if we can't determine it, as may occur in ABI mode.
    */
-  definedIn?: Format.Types.ContractType;
+  definedIn?: Types.ContractType;
   /**
    * The list of decoded arguments to the event.
    */
@@ -290,7 +294,7 @@ export interface AnonymousDecoding {
    * The ABI entry for the event.  You can use this to extract the name, for
    * instance.
    */
-  abi: AbiData.EventAbiEntry; //should be anonymous
+  abi: Abi.EventEntry; //should be anonymous
   /**
    * The decoding mode that was used; [see the README](../#decoding-modes) for
    * more on these.
@@ -316,6 +320,31 @@ export interface ReturnDecoding {
    * The list of decoded return values from the function.
    */
   arguments: AbiArgument[];
+  /**
+   * The decoding mode that was used; [see the README](../#decoding-modes) for
+   * more on these.
+   */
+  decodingMode: DecodingMode;
+}
+
+/**
+ * This type represents a decoding of the return data as a raw bytestring
+ * (as might be returned from a fallback function).
+ * @Category Output
+ */
+export interface RawReturnDecoding {
+  /**
+   * The kind of decoding; indicates that this is a RawReturnDecoding.
+   */
+  kind: "returnmessage";
+  /**
+   * Indicates that this kind of decoding indicates a successful return.
+   */
+  status: true;
+  /**
+   * The returned bytestring, as a hex string.
+   */
+  data: string;
   /**
    * The decoding mode that was used; [see the README](../#decoding-modes) for
    * more on these.
@@ -377,6 +406,20 @@ export interface RevertMessageDecoding {
    */
   kind: "revert";
   /**
+   * The ABI entry for the error that was thrown.  You can use this
+   * to extract the name, for instance.  This may be spoofed for built-in
+   * types of errors.
+   */
+  abi: Abi.ErrorEntry;
+  /**
+   * The class of the contract that (according to this decoding) defined the
+   * error type, as a Format.Types.ContractType.  This will be `null` if the
+   * error was defined outside of the contract or it's one of the builtin
+   * `Error(string)` or `Panic(uint)` types.
+   * May be omitted if we can't determine it, as may occur in ABI mode.
+   */
+  definedIn?: Types.ContractType | null;
+  /**
    * Indicates that this kind of decoding indicates an unsuccessful return.
    */
   status: false;
@@ -419,7 +462,7 @@ export interface BytecodeDecoding {
   /**
    * The class of contract being constructed, as a Format.Types.ContractType.
    */
-  class: Format.Types.ContractType;
+  class: Types.ContractType;
   /**
    * Decodings for any immutable state variables the created contract contains.
    * Omitted in ABI mode.
@@ -488,7 +531,7 @@ export interface AbiArgument {
    * may contain errors (although event decodings should typically not contain errors;
    * see the [[DecodedLog]] documentation for why).
    */
-  value: Format.Values.Result;
+  value: Values.Result;
 }
 
 /**
@@ -516,14 +559,6 @@ export interface CodeRequest {
   address: string;
 }
 
-export type PaddingMode = "default" | "permissive" | "zero" | "right";
-//default: check padding; the type of padding is determined by the type
-//permissive: like default, but turns off the check on certain types
-//zero: forces zero-padding even on signed types
-//right: forces right-padding on all types
-
-export type PaddingType = "left" | "right" | "signed";
-
 export interface DecoderOptions {
   paddingMode?: PaddingMode;
   strictAbiMode?: boolean; //throw errors instead of returning; check array & string lengths (crudely)
@@ -532,3 +567,209 @@ export interface DecoderOptions {
   memoryVisited?: number[]; //for circularity detection
   lengthOverride?: BN; //if present, causes the ABI decoder to use this length instead of reading it from the data
 }
+
+/**
+ * Used to indicate whether "extra" event decodings -- event decodings from
+ * non-library contracts other than the one that appears to have emitted
+ * the event -- should be returned.
+ *
+ * * `"off"`: Exclude extra decodings (the default).
+ * * `"on"`: Include extra decodings.
+ * * `"necessary"`: Include extra decodings only if there are no others.
+ *
+ * Extra decodings will always be returned after other decodings.
+ *
+ * @Category Inputs
+ */
+export type ExtrasAllowed = "off" | "on" | "necessary";
+
+/**
+ * The type of the options parameter to [[decodeEvent]].  This type will be expanded in the future
+ * as more filtering options are added.
+ *
+ * @Category Inputs
+ */
+export interface LogOptions {
+  /**
+   * If passed, restricts to events with the given name.
+   */
+  name?: string;
+  /**
+   * Used to indicate whether "extra" event decodings -- event decodings from
+   * non-library contracts other than the one that appears to have emitted
+   * the event -- should be returned.  Defaults to `"off"`.
+   */
+  extras?: ExtrasAllowed;
+  /**
+   * If passed, restricts to events with the given ID.  This is meant for
+   * internal use by Truffle Debugger; you probably don't want to bother
+   * with this option.
+   */
+  id?: string;
+  /**
+   * Allows decodings that don't pass the re-encoding test.  Don't turn
+   * this on unless you know what you're doing!
+   */
+  disableChecks?: boolean;
+}
+
+/**
+ * An encoder request; can come in one of three types.  It can be either a
+ * request to understand a numeric input (integer or decimal), or a request to
+ * resolve a contract name.  The "kind" field distinguishes.
+ *
+ * @Category Requests
+ */
+export type WrapRequest = IntegerWrapRequest | DecimalWrapRequest | AddressWrapRequest;
+
+/**
+ * A request to understand an integer value.
+ *
+ * @Category Requests
+ */
+export interface IntegerWrapRequest {
+  /**
+   * Indicates that this is a IntegerWrapRequest.
+   */
+  kind: "integer";
+  /**
+   * The input whose numeric value needs to be extracted.
+   */
+  input: unknown;
+}
+
+/**
+ * A request to understand an decimal value.
+ *
+ * @Category Requests
+ */
+export interface DecimalWrapRequest {
+  /**
+   * Indicates that this is a DecimalWrapRequest.
+   */
+  kind: "decimal";
+  /**
+   * The input whose numeric value needs to be extracted.
+   */
+  input: unknown;
+}
+
+/**
+ * A request to resolve a contract name to an address.
+ *
+ * @Category Requests
+ */
+export interface AddressWrapRequest {
+  /**
+   * Indicates that this is an AddressWrapRequest.
+   */
+  kind: "address";
+  /**
+   * The name that needs to be resolved to an address.
+   */
+  name: string;
+}
+
+/**
+ * An encoder response; contains either a numeric value (as a BigInt or Big)
+ * or an address.
+ *
+ * @Category Requests
+ */
+export type WrapResponse = IntegerWrapResponse | DecimalWrapResponse | AddressWrapResponse;
+
+/**
+ * A response with an integral numeric value, as BigInt.
+ *
+ * @Category Requests
+ */
+export interface IntegerWrapResponse {
+  /**
+   * Indicates that this is a IntegerWrapResponse.
+   */
+  kind: "integer";
+  /**
+   * The numeric value that was extracted, as a BigInt, or null, to indicate
+   * that either the number format wasn't recognized or wasn't an integer.
+   */
+  value: bigint | null;
+  /**
+   * If present, the reason the number wasn't recognized as an integer.
+   */
+  reason?: string;
+  /**
+   * If present, indicates that the input was recognized but not as an integer.
+   */
+  partiallyRecognized?: true;
+}
+
+/**
+ * A response with an decimal numeric value, as Big.
+ *
+ * @Category Requests
+ */
+export interface DecimalWrapResponse {
+  /**
+   * Indicates that this is a DecimalWrapResponse.
+   */
+  kind: "decimal";
+  /**
+   * The numeric value that was extracted, as a Big, or null, to indicate
+   * that the number format wasn't recognized.
+   */
+  value: Big | null;
+  /**
+   * If present, the reason the number wasn't recognized as a decimal.
+   */
+  reason?: string;
+  /**
+   * If present, indicates that the input was recognized but not as a decimal.
+   */
+  partiallyRecognized?: true;
+}
+
+/**
+ * A response with an address for a contract name (or unusual address form).
+ *
+ * @Category Requests
+ */
+export interface AddressWrapResponse {
+  /**
+   * Indicates that this is an AddressWrapResponse.
+   */
+  kind: "address";
+  /**
+   * The address for the contract name, or null, to indicate that no such
+   * contract was found.
+   */
+  address: string | null;
+  /**
+   * If present, the reason the address wasn't found.
+   */
+  reason?: string;
+  /**
+   * If present, indicates that the input was recognized but not as a valid address.
+   */
+  partiallyRecognized?: true;
+}
+
+/**
+ * Specifies a block.  Can be given by number, or can be given via the
+ * special strings "genesis", "latest", or "pending".
+ *
+ * Intended to work like Web3's
+ * [BlockType](https://web3js.readthedocs.io/en/v1.2.1/web3-eth.html#id14).
+ *
+ * *Warning*: Using "pending", while allowed, is not advised, as it may lead
+ * to internally inconsistent results.  Use of "latest" is safe and will not
+ * lead to inconsistent results from a single decoder call due to the decoder's
+ * caching system, but pending blocks cannot be cached under this system, which
+ * may cause inconsistencies.
+ * @category Inputs
+ */
+export type BlockSpecifier = number | "genesis" | "latest" | "pending";
+
+/**
+ * @hidden
+ */
+export type RegularizedBlockSpecifier = number | "pending";

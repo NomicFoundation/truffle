@@ -1,12 +1,17 @@
-import {
+import type {
   Mnemonic,
   MnemonicPhrase,
   PrivateKey,
+  Provider,
+  ProviderUrl,
   ProviderOrUrl,
   AddressIndex,
   NumberOfAddresses,
+  PollingInterval,
   ShareNonce,
-  DerivationPath
+  DerivationPath,
+  ChainId,
+  ChainSettings
 } from "./types";
 
 /*
@@ -35,11 +40,16 @@ export type InputSigningAuthority =
   | PrivateKeysSigningAuthority;
 
 export interface CommonOptions {
-  providerOrUrl: ProviderOrUrl;
+  providerOrUrl?: ProviderOrUrl;
+  provider?: Provider;
+  url?: ProviderUrl;
   addressIndex?: AddressIndex;
   numberOfAddresses?: NumberOfAddresses;
   shareNonce?: ShareNonce;
   derivationPath?: DerivationPath;
+  pollingInterval?: PollingInterval;
+  chainId?: ChainId;
+  chainSettings?: ChainSettings;
 }
 
 export type Options = SigningAuthority & CommonOptions;

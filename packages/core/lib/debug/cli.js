@@ -1,17 +1,18 @@
 const debugModule = require("debug");
 const debug = debugModule("lib:debug:cli");
 
-const ora = require("ora");
 const fs = require("fs-extra");
 const path = require("path");
 
 const Debugger = require("@truffle/debugger");
 const DebugUtils = require("@truffle/debug-utils");
 const Codec = require("@truffle/codec");
+const { fetchAndCompileForDebugger } = require("@truffle/fetch-and-compile");
 
 const { DebugInterpreter } = require("./interpreter");
 const { DebugCompiler } = require("./compiler");
-const { DebugExternalHandler } = require("./external");
+
+const Spinner = require("@truffle/spinners").Spinner;
 
 class CLIDebugger {
   constructor(config, { compilations, txHash } = {}) {
@@ -43,14 +44,20 @@ class CLIDebugger {
   }
 
   async fetchExternalSources(bugger) {
-    const fetchSpinner = ora(
+    const fetchSpinner = new Spinner(
+      "core:debug:cli:fetch",
       "Getting and compiling external sources..."
-    ).start();
-    const { badAddresses, badFetchers } = await new DebugExternalHandler(
-      bugger,
-      this.config
-    ).fetch(); //note: mutates bugger!
-    if (badAddresses.length === 0 && badFetchers.length === 0) {
+    );
+    const {
+      fetch: badAddresses,
+      fetchers: badFetchers,
+      compile: badCompilationAddresses
+    } = await fetchAndCompileForDebugger(bugger, this.config); //Note: mutates bugger!!
+    if (
+      badAddresses.length === 0 &&
+      badFetchers.length === 0 &&
+      badCompilationAddresses.length === 0
+    ) {
       fetchSpinner.succeed();
     } else {
       let warningStrings = [];
@@ -66,93 +73,104 @@ class CLIDebugger {
           )}.`
         );
       }
+      if (badCompilationAddresses.length > 0) {
+        warningStrings.push(
+          `Errors occurred while compiling sources for addresses ${badCompilationAddresses.join(
+            ", "
+          )}.`
+        );
+      }
+      // simulate ora's "warn" feature
       fetchSpinner.warn(warningStrings.join("  "));
     }
   }
 
   async getCompilations() {
+    //if compileNone is true and configFileSkiped
+    //we understand that user is debugging using --url and does not have a config file
+    //so instead of resolving compilations, we return an empty value
+    if (this.config.compileNone && this.config.configFileSkipped) {
+      return [];
+    }
+
     let artifacts;
     artifacts = await this.gatherArtifacts();
-    if (artifacts) {
-      let shimmedCompilations = Codec.Compilations.Utils.shimArtifacts(
-        artifacts
-      );
+    if ((artifacts && !this.config.compileAll) || this.config.compileNone) {
+      let shimmedCompilations =
+        Codec.Compilations.Utils.shimArtifacts(artifacts);
       //if they were compiled simultaneously, yay, we can use it!
-      if (shimmedCompilations.every(DebugUtils.isUsableCompilation)) {
+      //(or if we *force* it to...)
+      if (
+        this.config.compileNone ||
+        shimmedCompilations.every(DebugUtils.isUsableCompilation)
+      ) {
+        debug("shimmed compilations usable");
         return shimmedCompilations;
       }
+      debug("shimmed compilations unusable");
     }
-    //if not, or if build directory doens't exist, we have to recompile
+    //if not, or if build directory doesn't exist, we have to recompile
     return await this.compileSources();
   }
 
   async compileSources() {
-    const compileSpinner = ora("Compiling your contracts...").start();
+    const compileSpinner = new Spinner(
+      "core:debug:cli:compile",
+      "Compiling your contracts..."
+    );
 
-    const compilationResult = await new DebugCompiler(this.config).compile();
+    const compilationResult = await new DebugCompiler(this.config).compile({
+      withTests: this.config.compileTests
+    });
     debug("compilationResult: %O", compilationResult);
 
     compileSpinner.succeed();
 
-    return [].concat(
-      ...compilationResult.map((compilation, index) =>
-        Codec.Compilations.Utils.shimArtifacts(
-          compilation.contracts,
-          compilation.sourceIndexes,
-          `shimmedCompilationNumber(${index})`
-        )
-      )
-    );
+    return Codec.Compilations.Utils.shimCompilations(compilationResult);
   }
 
   async startDebugger(compilations) {
     const startMessage = DebugUtils.formatStartMessage(
       this.txHash !== undefined
     );
-    debug("starting debugger");
-    let startSpinner;
+    let bugger;
     if (!this.config.fetchExternal) {
-      //in external mode spinner is handled below
-      startSpinner = ora(startMessage).start();
-    }
-
-    //note that in external mode we start in light mode
-    //and only wake up to full mode later!
-    //note: if we are in external mode, txHash had better be defined!
-    //(this is ensured by commands/debug.js, so we don't check it ourselves)
-    const bugger =
-      this.txHash !== undefined
-        ? await Debugger.forTx(this.txHash, {
-            provider: this.config.provider,
-            compilations,
-            lightMode: this.config.fetchExternal
-          })
-        : await Debugger.forProject({
-            provider: this.config.provider,
-            compilations
-          });
-
-    debug("debugger started");
-
-    if (!this.config.fetchExternal) {
-      // check for error
-      if (bugger.view(Debugger.selectors.session.status.isError)) {
-        startSpinner.fail();
+      //ordinary case, not doing fetch-external
+      const startSpinner = new Spinner("core:debug:cli:start", startMessage);
+      bugger = await Debugger.forProject({
+        provider: this.config.provider,
+        compilations
+      });
+      if (this.txHash !== undefined) {
+        try {
+          debug("loading %s", this.txHash);
+          await bugger.load(this.txHash);
+          startSpinner.succeed();
+        } catch (_) {
+          debug("loading error");
+          startSpinner.fail();
+          //just start up unloaded
+        }
       } else {
         startSpinner.succeed();
       }
     } else {
-      debug("about to fetch external sources");
+      //fetch-external case
+      //note that in this case we start in light mode
+      //and only wake up to full mode later!
+      //also, in this case, we can be sure that txHash is defined
+      bugger = await Debugger.forTx(this.txHash, {
+        provider: this.config.provider,
+        compilations,
+        lightMode: true
+      }); //note: may throw!
       await this.fetchExternalSources(bugger); //note: mutates bugger!
-      startSpinner = ora(startMessage).start();
+      const startSpinner = new Spinner("core:debug:cli:start", startMessage);
       await bugger.startFullMode();
-      if (bugger.view(Debugger.selectors.session.status.isError)) {
-        startSpinner.fail();
-      } else {
-        startSpinner.succeed();
-      }
+      //I'm removing the failure check here because I don't think that can
+      //actually happen
+      startSpinner.succeed();
     }
-
     return bugger;
   }
 

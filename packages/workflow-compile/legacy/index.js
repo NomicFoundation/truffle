@@ -5,11 +5,6 @@ const solcCompile = require("@truffle/compile-solidity");
 const vyperCompile = require("@truffle/compile-vyper");
 const { prepareConfig } = require("../utils");
 const { Shims } = require("@truffle/compile-common");
-const {
-  reportCompilationStarted,
-  reportNothingToCompile,
-  reportCompilationFinished
-} = require("../reports");
 
 const SUPPORTED_COMPILERS = {
   solc: solcCompile,
@@ -41,7 +36,7 @@ const WorkflowCompile = {
   // network_id: network id to link saved contract artifacts.
   // quiet: Boolean. Suppress output. Defaults to false.
   // strict: Boolean. Return compiler warnings as errors. Defaults to false.
-  compile: async function(options, callback) {
+  compile: async function (options, callback) {
     const callbackPassed = typeof callback === "function";
     try {
       const config = prepareConfig(options);
@@ -62,7 +57,11 @@ const WorkflowCompile = {
       );
 
       if (numberOfCompiledContracts === 0 && config.events) {
-        config.events.emit("compile:nothingToCompile");
+        if (config.compileNone || config["compile-none"]) {
+          config.events.emit("compile:skipped");
+        } else {
+          config.events.emit("compile:nothingToCompile");
+        }
       }
 
       if (config.events) {
@@ -81,7 +80,7 @@ const WorkflowCompile = {
     }
   },
 
-  compileSources: async function(config, compilers) {
+  compileSources: async function (config, compilers) {
     compilers = config.compiler
       ? config.compiler === "none"
         ? []
@@ -137,10 +136,6 @@ const WorkflowCompile = {
       })
     );
   },
-
-  reportCompilationStarted,
-  reportCompilationFinished,
-  reportNothingToCompile,
 
   writeContracts: async (contracts, options) => {
     fse.ensureDirSync(options.contracts_build_directory);

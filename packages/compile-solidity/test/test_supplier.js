@@ -18,7 +18,9 @@ describe("CompilerSupplier", function () {
     let oldPragmaFloatSource; // ^0.4.15
     let version4PragmaSource; // ^0.4.21
     let version5PragmaSource; // ^0.5.0
-    let versionLatestPragmaSource; // Currently: ^0.7.0
+    let version6PragmaSource; // ^0.6.0
+    let version8PragmaSource; // ^0.8.0
+    let versionLatestPragmaSource; // Currently: ^0.8.0
     let compileConfig;
 
     const options = {
@@ -44,17 +46,23 @@ describe("CompilerSupplier", function () {
         path.join(__dirname, "./sources/v0.5.x/Version5Pragma.sol"),
         "utf-8"
       );
-
-      const versionLatestPragma = await fse.readFile(
-        path.join(__dirname, "./sources/v0.7.x/Version7Pragma.sol"), //update when necessary
+      const version6Pragma = await fse.readFile(
+        path.join(__dirname, "./sources/v0.6.x/Version6Pragma.sol"),
         "utf-8"
       );
+      const version8Pragma = await fse.readFile(
+        path.join(__dirname, "./sources/v0.8.x/Version8Pragma.sol"),
+        "utf-8"
+      );
+      const versionLatestPragma = version8Pragma; //update when necessary
 
       oldPragmaPinSource = { "OldPragmaPin.sol": oldPragmaPin };
       oldPragmaFloatSource = { "OldPragmaFloat.sol": oldPragmaFloat };
       version4PragmaSource = { "NewPragma.sol": version4Pragma };
       version5PragmaSource = { "Version5Pragma.sol": version5Pragma };
-      versionLatestPragmaSource = { "Version7Pragma.sol": versionLatestPragma }; //update when necessary
+      version6PragmaSource = { "Version6Pragma.sol": version6Pragma };
+      version8PragmaSource = { "Version8Pragma.sol": version8Pragma };
+      versionLatestPragmaSource = { "Version8Pragma.sol": versionLatestPragma }; //update when necessary
     });
 
     it("compiles w/ default solc if no compiler specified (float)", async function () {
@@ -114,10 +122,9 @@ describe("CompilerSupplier", function () {
     });
 
     it("compiles w/ local path solc when options specify path", async function () {
-      const pathToSolc = path.join(
-        __dirname,
-        "../../../node_modules/solc/index.js"
-      );
+      // If multiple child projects have same solc version dependency, then yarn hoists the solc dependency 
+      // in the truffle root node_modules folder rather than the local package node_modules folder
+      const pathToSolc = path.join(__dirname, "../../../node_modules/solc/index.js");
 
       options.compilers = {
         solc: {
@@ -128,14 +135,14 @@ describe("CompilerSupplier", function () {
       const localPathOptions = Config.default().merge(options);
 
       const { compilations } = await Compile.sources({
-        sources: version5PragmaSource,
+        sources: version8PragmaSource,
         options: localPathOptions
       });
-      const Version5Pragma = findOne(
-        "Version5Pragma",
+      const Version8Pragma = findOne(
+        "Version8Pragma",
         compilations[0].contracts
       );
-      assert(Version5Pragma.contractName === "Version5Pragma");
+      assert(Version8Pragma.contractName === "Version8Pragma");
     });
 
     it("caches releases and uses them if available", async function () {
@@ -209,12 +216,12 @@ describe("CompilerSupplier", function () {
           options: nativeSolcOptions
         });
         const VersionLatestPragma = findOne(
-          "Version7Pragma",
+          "Version8Pragma",
           compilations[0].contracts
         ); //update when necessary
-        assert(VersionLatestPragma.compiler.version.includes("0.7.")); //update when necessary
+        assert(VersionLatestPragma.compiler.version.includes("0.8.")); //update when necessary
         assert(
-          VersionLatestPragma.contractName === "Version7Pragma", //update when necessary
+          VersionLatestPragma.contractName === "Version8Pragma", //update when necessary
           "Should have compiled"
         );
       });

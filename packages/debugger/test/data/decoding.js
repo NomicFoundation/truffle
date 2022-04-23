@@ -1,5 +1,5 @@
 import debugModule from "debug";
-const debug = debugModule("test:data:decode");
+const debug = debugModule("debugger:test:data:decode");
 
 import faker from "faker";
 
@@ -104,7 +104,7 @@ describe("Decoding", function () {
     evm.current.state.storage,
 
     (contractName, fixtures) => {
-      return `pragma solidity ^0.7.0;
+      return `pragma solidity ^0.8.0;
 
 contract ${contractName} {
 
@@ -131,7 +131,7 @@ contract ${contractName} {
     evm.current.state.storage,
 
     (contractName, fixtures) => {
-      return `pragma solidity ^0.7.0;
+      return `pragma solidity ^0.8.0;
 
 contract ${contractName} {
   event Done();
@@ -185,7 +185,7 @@ contract ${contractName} {
         }
       }
 
-      return `pragma solidity ^0.7.0;
+      return `pragma solidity ^0.8.0;
 
 contract ${contractName} {
 

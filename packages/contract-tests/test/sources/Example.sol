@@ -1,4 +1,4 @@
-pragma solidity ^0.5.0;
+pragma solidity ^0.8.0;
 
 contract Example {
 
@@ -13,7 +13,9 @@ contract Example {
   event SpecialEvent();
   event NumberEvent(int numA, int indexed numB, address addrC, uint numD, uint);
 
-  constructor(uint val) public {
+  enum ExampleEnum { ExampleZero, ExampleOne, ExampleTwo }
+
+  constructor(uint val) {
     // Constructor revert
     require(val != 13);
     require(val != 2001, 'reasonstring');
@@ -108,6 +110,12 @@ contract Example {
     assert(false);
   }
 
+  function triggerInvalidOpcode() public {
+    assembly {
+      invalid()
+    }
+  }
+
   function triggerRequireWithReasonError() public {
     require(false, 'reasonstring');
   }
@@ -199,7 +207,7 @@ contract Example {
     return arr;
   }
 
-  function() external payable {
+  fallback() external payable {
     fallbackTriggered = true;
   }
 }

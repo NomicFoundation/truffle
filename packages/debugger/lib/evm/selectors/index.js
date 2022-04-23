@@ -1,5 +1,5 @@
 import debugModule from "debug";
-const debug = debugModule("debugger:evm:selectors"); // eslint-disable-line no-unused-vars
+const debug = debugModule("debugger:evm:selectors");
 
 import { createSelectorTree, createLeaf } from "reselect-tree";
 import BN from "bn.js";
@@ -14,7 +14,8 @@ import {
   isShortCallMnemonic,
   isDelegateCallMnemonicBroad,
   isDelegateCallMnemonicStrict,
-  isStaticCallMnemonic
+  isStaticCallMnemonic,
+  isSelfDestructMnemonic
 } from "lib/helpers";
 
 const ZERO_WORD = "00".repeat(Codec.Evm.Utils.WORD_SIZE);
@@ -127,6 +128,13 @@ function createStepSelectors(step, state = null) {
     isCreate: createLeaf(["./trace"], step => isCreateMnemonic(step.op)),
 
     /**
+     * .isSelfDestruct
+     */
+    isSelfDestruct: createLeaf(["./trace"], step =>
+      isSelfDestructMnemonic(step.op)
+    ),
+
+    /**
      * .isCreate2
      */
     isCreate2: createLeaf(["./trace"], step => step.op === "CREATE2"),
@@ -149,7 +157,13 @@ function createStepSelectors(step, state = null) {
     touchesStorage: createLeaf(
       ["./isStore", "isLoad"],
       (stores, loads) => stores || loads
-    )
+    ),
+
+    /*
+     * .isPop
+     * used by data
+     */
+    isPop: createLeaf(["./trace"], step => step.op === "POP")
   };
 
   if (state) {
@@ -238,10 +252,13 @@ function createStepSelectors(step, state = null) {
        * data passed to EVM call
        */
       callData: createLeaf(
-        ["./isCall", "./isShortCall", state],
-        (isCall, short, { stack, memory }) => {
+        ["./isCall", "./isShortCall", "./isCreate", state],
+        (isCall, short, isCreate, { stack, memory }) => {
           if (!isCall) {
-            return null;
+            //if it's not a call or create, this is invalid and we return null.
+            //for creations, we return 0x (if you want the binary, use createBinary
+            //instead)
+            return isCreate ? "0x" : null;
           }
 
           //if it's 6-argument call, the data start and offset will be one spot
@@ -320,6 +337,21 @@ function createStepSelectors(step, state = null) {
       ),
 
       /**
+       * .salt
+       */
+      salt: createLeaf(
+        ["./isCreate2", state],
+
+        (isCreate2, { stack }) => {
+          if (!isCreate2) {
+            return null;
+          }
+
+          return "0x" + stack[stack.length - 4];
+        }
+      ),
+
+      /**
        * .callContext
        *
        * context of what this step is calling/creating (if applicable)
@@ -366,8 +398,16 @@ const evm = createSelectorTree({
        * returns function (binary) => context (returns the *ID* of the context)
        * (returns null on no match)
        */
-      search: createLeaf(["/info/contexts"], contexts => binary =>
-        Codec.Contexts.Utils.findDebuggerContext(contexts, binary)
+      search: createLeaf(
+        ["/info/contexts"],
+        contexts => binary =>
+          //HACK: the type of contexts doesn't actually match!! fortunately
+          //it's good enough to work
+          (
+            Codec.Contexts.Utils.findContext(contexts, binary) || {
+              context: null
+            }
+          ).context
       )
     }
   },
@@ -464,7 +504,7 @@ const evm = createSelectorTree({
      */
     state: Object.assign(
       {},
-      ...["depth", "error", "gas", "memory", "stack", "storage"].map(param => ({
+      ...["depth", "error", "gas", "memory", "stack"].map(param => ({
         [param]: createLeaf([trace.step], step => step[param])
       }))
     ),
@@ -538,7 +578,7 @@ const evm = createSelectorTree({
       ),
 
       /**
-       * evm.current.step.isInstantCallOrReturn
+       * evm.current.step.isInstantCallOrCreate
        *
        * are we doing a call or create for which there are no trace steps?
        * This can happen if:
@@ -562,7 +602,7 @@ const evm = createSelectorTree({
       ),
 
       /**
-       * .isNormalHalting
+       * evm.current.step.isNormalHalting
        */
       isNormalHalting: createLeaf(
         ["./isHalting", "./returnStatus"],
@@ -570,7 +610,7 @@ const evm = createSelectorTree({
       ),
 
       /**
-       * .isHalting
+       * evm.current.step.isHalting
        *
        * whether the instruction halts or returns from a calling context
        * HACK: the check for stepsRemainining === 0 is a hack to cover
@@ -593,19 +633,20 @@ const evm = createSelectorTree({
 
       /**
        * evm.current.step.returnStatus
-       * checks the return status of the *current* halting instruction
-       * returns null if not halting
+       * checks the return status of the *current* halting instruction or insta-call
+       * returns null if not halting & not an insta-call
        * (returns a boolean -- true for success, false for failure)
        */
       returnStatus: createLeaf(
         [
           "./isHalting",
+          "./isInstantCallOrCreate",
           "/next/state",
           trace.stepsRemaining,
           "/transaction/status"
         ],
-        (isHalting, { stack }, remaining, finalStatus) => {
-          if (!isHalting) {
+        (isHalting, isInstaCall, { stack }, remaining, finalStatus) => {
+          if (!isHalting && !isInstaCall) {
             return null; //not clear this'll do much good since this may get
             //read as false, but, oh well, may as well
           }
@@ -668,6 +709,24 @@ const evm = createSelectorTree({
           }
           return stack[stack.length - 1];
         }
+      ),
+
+      /**
+       * evm.current.step.beneficiary
+       * NOTE: for a value-destroying selfdestruct, returns null
+       */
+      beneficiary: createLeaf(
+        ["./isSelfDestruct", "../state", "../call"],
+
+        (isSelfDestruct, { stack }, { storageAddress: currentAddress }) => {
+          if (!isSelfDestruct) {
+            return null;
+          }
+          const beneficiary = Codec.Evm.Utils.toAddress(
+            stack[stack.length - 1]
+          );
+          return beneficiary !== currentAddress ? beneficiary : null;
+        }
       )
     },
 
@@ -683,17 +742,12 @@ const evm = createSelectorTree({
 
       /**
        * evm.current.codex.storage
-       * the current storage, as fetched from the codex... unless we're in a
-       * failed creation call, then we just fall back on the state (which will
-       * work, since nothing else can interfere with the storage of a failed
-       * creation call!)
+       * the current storage, as fetched from the codex
        */
       storage: createLeaf(
-        ["./_", "../state/storage", "../call"],
-        (codex, rawStorage, { storageAddress }) =>
-          storageAddress === Codec.Evm.Utils.ZERO_ADDRESS
-            ? rawStorage //HACK -- if zero address ignore the codex
-            : codex[codex.length - 1].accounts[storageAddress].storage
+        ["./_", "../call"],
+        (codex, { storageAddress }) =>
+          codex[codex.length - 1].accounts[storageAddress].storage
       ),
 
       /*

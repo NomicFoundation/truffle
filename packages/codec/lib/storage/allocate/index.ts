@@ -1,15 +1,14 @@
 import debugModule from "debug";
 const debug = debugModule("codec:storage:allocate");
 
-import { DecodingError } from "@truffle/codec/errors";
 import * as Compiler from "@truffle/codec/compiler";
 import * as Common from "@truffle/codec/common";
 import * as Basic from "@truffle/codec/basic";
-import * as Storage from "@truffle/codec/storage/types";
+import type * as Storage from "@truffle/codec/storage/types";
 import * as Utils from "@truffle/codec/storage/utils";
 import * as Ast from "@truffle/codec/ast";
-import * as Pointer from "@truffle/codec/pointer";
-import {
+import type * as Pointer from "@truffle/codec/pointer";
+import type {
   StorageAllocation,
   StorageAllocations,
   StorageMemberAllocation,
@@ -17,12 +16,12 @@ import {
   StateAllocations,
   StateVariableAllocation
 } from "./types";
-import { ContractAllocationInfo } from "@truffle/codec/abi-data/allocate";
-import { ImmutableReferences } from "@truffle/contract-schema/spec";
+import type { ContractAllocationInfo } from "@truffle/codec/abi-data/allocate";
+import type { ImmutableReferences } from "@truffle/contract-schema/spec";
 import * as Evm from "@truffle/codec/evm";
 import * as Format from "@truffle/codec/format";
 import BN from "bn.js";
-import partition from "lodash.partition";
+import partition from "lodash/partition";
 
 export {
   StorageAllocation,
@@ -62,19 +61,27 @@ interface StorageAllocationInfo {
 //contracts contains only the contracts to be allocated; any base classes not
 //being allocated should just be in referenceDeclarations
 export function getStorageAllocations(
-  userDefinedTypes: Format.Types.TypesById
+  userDefinedTypesByCompilation: Format.Types.TypesByCompilationAndId
 ): StorageAllocations {
   let allocations: StorageAllocations = {};
-  for (const dataType of Object.values(userDefinedTypes)) {
-    if (dataType.typeClass === "struct") {
-      try {
-        allocations = allocateStruct(dataType, userDefinedTypes, allocations);
-      } catch (_) {
-        //if allocation fails... oh well, allocation fails, we do nothing and just move on :P
-        //note: a better way of handling this would probably be to *mark* it
-        //as failed rather than throwing an exception as that would lead to less
-        //recomputation, but this is simpler and I don't think the recomputation
-        //should really be a problem
+  for (const compilation of Object.values(userDefinedTypesByCompilation)) {
+    const { compiler, types: userDefinedTypes } = compilation;
+    for (const dataType of Object.values(compilation.types)) {
+      if (dataType.typeClass === "struct") {
+        try {
+          allocations = allocateStruct(
+            dataType,
+            userDefinedTypes,
+            allocations,
+            compiler
+          );
+        } catch {
+          //if allocation fails... oh well, allocation fails, we do nothing and just move on :P
+          //note: a better way of handling this would probably be to *mark* it
+          //as failed rather than throwing an exception as that would lead to less
+          //recomputation, but this is simpler and I don't think the recomputation
+          //should really be a problem
+        }
       }
     }
   }
@@ -116,7 +123,7 @@ export function getStateAllocations(
         storageAllocations,
         allocations
       );
-    } catch (_) {
+    } catch {
       //we're just going to allow failure here and catch the problem elsewhere
     }
   }
@@ -126,7 +133,8 @@ export function getStateAllocations(
 function allocateStruct(
   dataType: Format.Types.StructType,
   userDefinedTypes: Format.Types.TypesById,
-  existingAllocations: StorageAllocations
+  existingAllocations: StorageAllocations,
+  compiler?: Compiler.CompilerVersion
 ): StorageAllocations {
   //NOTE: dataType here should be a *stored* type!
   //it is up to the caller to take care of this
@@ -134,7 +142,8 @@ function allocateStruct(
     dataType.id,
     dataType.memberTypes,
     userDefinedTypes,
-    existingAllocations
+    existingAllocations,
+    compiler
   );
 }
 
@@ -142,7 +151,8 @@ function allocateMembers(
   parentId: string,
   members: Format.Types.NameTypePair[],
   userDefinedTypes: Format.Types.TypesById,
-  existingAllocations: StorageAllocations
+  existingAllocations: StorageAllocations,
+  compiler?: Compiler.CompilerVersion
 ): StorageAllocations {
   let offset: number = 0; //will convert to BN when placing in slot
   let index: number = Evm.Utils.WORD_SIZE - 1;
@@ -162,7 +172,8 @@ function allocateMembers(
     ({ size, allocations } = storageSizeAndAllocate(
       member.type,
       userDefinedTypes,
-      allocations
+      allocations,
+      compiler
     ));
 
     //if it's sized in words (and we're not at the start of slot) we need to start on a new slot
@@ -294,9 +305,8 @@ function allocateContractState(
   //base contracts are listed from most derived to most base, so we
   //have to reverse before processing, but reverse() is in place, so we
   //clone with slice first
-  let linearizedBaseContractsFromBase: number[] = contract.linearizedBaseContracts
-    .slice()
-    .reverse();
+  let linearizedBaseContractsFromBase: number[] =
+    contract.linearizedBaseContracts.slice().reverse();
 
   //first, let's get all the variables under consideration
   let variables = [].concat(
@@ -340,7 +350,7 @@ function allocateContractState(
   );
 
   //transform storage variables into data types
-  let storageVariableTypes = storageVariables.map(variable => ({
+  const storageVariableTypes = storageVariables.map(variable => ({
     name: variable.definition.name,
     type: Ast.Import.definitionToType(
       variable.definition,
@@ -351,15 +361,16 @@ function allocateContractState(
 
   //let's allocate the storage variables using a fictitious ID
   const id = "-1";
-  let storageVariableStorageAllocations = allocateMembers(
+  const storageVariableStorageAllocations = allocateMembers(
     id,
     storageVariableTypes,
     userDefinedTypes,
-    storageAllocations
+    storageAllocations,
+    compiler
   )[id];
 
   //transform to new format
-  let storageVariableAllocations = storageVariables.map(
+  const storageVariableAllocations = storageVariables.map(
     ({ definition, definedIn }, index) => ({
       definition,
       definedIn,
@@ -412,8 +423,8 @@ function allocateContractState(
     let arrayToGrabFrom = isConstant(variable.definition)
       ? constantVariableAllocations
       : isImmutable(variable.definition)
-        ? immutableVariableAllocations
-        : storageVariableAllocations;
+      ? immutableVariableAllocations
+      : storageVariableAllocations;
     contractAllocation.push(arrayToGrabFrom.shift()); //note that push and shift both modify!
   }
 
@@ -434,15 +445,22 @@ function allocateContractState(
 export function storageSize(
   dataType: Format.Types.Type,
   userDefinedTypes?: Format.Types.TypesById,
-  allocations?: StorageAllocations
+  allocations?: StorageAllocations,
+  compiler?: Compiler.CompilerVersion
 ): Storage.StorageLength {
-  return storageSizeAndAllocate(dataType, userDefinedTypes, allocations).size;
+  return storageSizeAndAllocate(
+    dataType,
+    userDefinedTypes,
+    allocations,
+    compiler
+  ).size;
 }
 
 function storageSizeAndAllocate(
   dataType: Format.Types.Type,
   userDefinedTypes?: Format.Types.TypesById,
-  existingAllocations?: StorageAllocations
+  existingAllocations?: StorageAllocations,
+  compiler?: Compiler.CompilerVersion
 ): StorageAllocationInfo {
   //we'll only directly handle reference types here;
   //direct types will be handled by dispatching to Basic.Allocate.byteLength
@@ -542,10 +560,24 @@ function storageSizeAndAllocate(
       };
     }
 
+    case "userDefinedValueType":
+      if (Compiler.Utils.solidityFamily(compiler) === "0.8.7+") {
+        //UDVTs were introduced in Solidity 0.8.8.  However, in that version,
+        //and that version only, they have a bug where they always take up a
+        //full word in storage regardless of the size of the underlying type.
+        return {
+          size: { words: 1 },
+          allocations: existingAllocations
+        };
+      }
+    //otherwise, treat them normally
+    //DELIBERATE FALL-TRHOUGH
     default:
       //otherwise, it's a direct type
       return {
-        size: { bytes: Basic.Allocate.byteLength(dataType, userDefinedTypes) },
+        size: {
+          bytes: Basic.Allocate.byteLength(dataType, userDefinedTypes)
+        },
         allocations: existingAllocations
       };
   }

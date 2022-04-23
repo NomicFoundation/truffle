@@ -33,6 +33,13 @@ export function interrupt() {
   return { type: INTERRUPT };
 }
 
+export const RUN_TO_END = "CONTROLLER_RUN_TO_END";
+export function runToEnd() {
+  return {
+    type: RUN_TO_END
+  };
+}
+
 export const CONTINUE = "CONTROLLER_CONTINUE";
 export function continueUntilBreakpoint(breakpoints) {
   //"continue" is not a legal name
@@ -62,6 +69,14 @@ export const REMOVE_ALL_BREAKPOINTS = "CONTROLLER_REMOVE_ALL_BREAKPOINTS";
 export function removeAllBreakpoints() {
   return {
     type: REMOVE_ALL_BREAKPOINTS
+  };
+}
+
+export const SET_INTERNAL_STEPPING = "CONTROLLER_SET_INTERNAL_STEPPING";
+export function setInternalStepping(status) {
+  return {
+    type: SET_INTERNAL_STEPPING,
+    status
   };
 }
 

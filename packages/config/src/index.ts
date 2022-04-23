@@ -1,10 +1,8 @@
-import "source-map-support/register";
 import path from "path";
-import assignIn from "lodash.assignin";
-import merge from "lodash.merge";
+import merge from "lodash/merge";
 import Module from "module";
 import findUp from "find-up";
-import Configstore from "configstore";
+import Conf from "conf";
 import TruffleError from "@truffle/error";
 import originalRequire from "original-require";
 import { getInitialConfig, configProps } from "./configDefaults";
@@ -12,8 +10,8 @@ import { EventManager } from "@truffle/events";
 
 const DEFAULT_CONFIG_FILENAME = "truffle-config.js";
 const BACKUP_CONFIG_FILENAME = "truffle.js"; // old config filename
-
 class TruffleConfig {
+  // eslint-disable-next-line no-undef
   [key: string]: any;
 
   private _deepCopy: string[];
@@ -24,29 +22,20 @@ class TruffleConfig {
     workingDirectory?: string,
     network?: any
   ) {
-    this._deepCopy = ["compilers"];
+    this._deepCopy = ["compilers", "mocha", "dashboard", "networks"];
     this._values = getInitialConfig({
       truffleDirectory,
       workingDirectory,
       network
     });
 
-    const eventsOptions = this.eventManagerOptions(this);
-    this.events = new EventManager(eventsOptions);
+    this.events = new EventManager(this);
 
     const props = configProps({ configObject: this });
 
     Object.entries(props).forEach(([propName, descriptor]) =>
       this.addProp(propName, descriptor)
     );
-  }
-
-  public eventManagerOptions(config: TruffleConfig): any {
-    let muteLogging;
-    const { quiet, logger, subscribers } = config;
-
-    if (quiet) muteLogging = true;
-    return { logger, muteLogging, subscribers };
   }
 
   public addProp(propertyName: string, descriptor: any): void {
@@ -61,7 +50,7 @@ class TruffleConfig {
     Object.defineProperty(this, propertyName, {
       get:
         descriptor.get ||
-        function() {
+        function () {
           // value is specified
           if (propertyName in self._values) {
             return self._values[propertyName];
@@ -77,7 +66,7 @@ class TruffleConfig {
         },
       set:
         descriptor.set ||
-        function(value) {
+        function (value) {
           self._values[propertyName] = descriptor.transform
             ? descriptor.transform(value)
             : value;
@@ -102,17 +91,19 @@ class TruffleConfig {
   }
 
   public with(obj: any): TruffleConfig {
+    //Normalized, or shallow clowning only copies an object's own enumerable
+    //properties ignoring properties up the prototype chain
     const current = this.normalize(this);
     const normalized = this.normalize(obj);
 
-    let eventsOptions = this.eventManagerOptions(this);
-    this.events.updateSubscriberOptions(eventsOptions);
-
-    return assignIn(
+    const newConfig = Object.assign(
       Object.create(TruffleConfig.prototype),
       current,
       normalized
     );
+
+    this.events.updateSubscriberOptions(newConfig);
+    return newConfig;
   }
 
   public merge(obj: any): TruffleConfig {
@@ -133,9 +124,7 @@ class TruffleConfig {
       }
     });
 
-    const eventsOptions = this.eventManagerOptions(this);
-    this.events.updateSubscriberOptions(eventsOptions);
-
+    this.events.updateSubscriberOptions(this);
     return this;
   }
 
@@ -200,7 +189,7 @@ class TruffleConfig {
 
     // The require-nocache module used to do this for us, but
     // it doesn't bundle very well. So we've pulled it out ourselves.
-    // @ts-ignore
+    //@ts-ignore
     delete require.cache[Module._resolveFilename(file, module)];
     const staticConfig = originalRequire(file);
 
@@ -208,21 +197,19 @@ class TruffleConfig {
     config.merge(options);
 
     // When loading a user's config, ensure their subscribers are initialized
-    const eventsOptions = config.eventManagerOptions(config);
-    config.events.updateSubscriberOptions(eventsOptions);
-    config.events.initializeUserSubscribers(eventsOptions);
+    config.events.updateSubscriberOptions(config);
+    config.events.initializeUserSubscribers(config);
 
     return config;
   }
 
-  public static getUserConfig(): Configstore {
-    return new Configstore("truffle", {}, { globalConfigPath: true });
+  public static getUserConfig(): Conf {
+    return new Conf({ projectName: "truffle" });
   }
 
   public static getTruffleDataDirectory(): string {
-    const configStore = TruffleConfig.getUserConfig();
-
-    return path.dirname(configStore.path);
+    const conf = TruffleConfig.getUserConfig();
+    return path.dirname(conf.path);
   }
 }
 

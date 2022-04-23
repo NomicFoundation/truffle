@@ -1,9 +1,9 @@
 import debugModule from "debug";
-const debug = debugModule("test:context");
+const debug = debugModule("debugger:test:context");
 
 import { assert } from "chai";
 
-import Ganache from "ganache-core";
+import Ganache from "ganache";
 
 import { prepareContracts } from "./helpers";
 import Debugger from "lib/debugger";
@@ -11,7 +11,7 @@ import Debugger from "lib/debugger";
 import sessionSelector from "lib/session/selectors";
 
 const __OUTER = `
-pragma solidity ^0.7.0;
+pragma solidity ^0.8.0;
 
 import "./InnerContract.sol";
 
@@ -33,7 +33,7 @@ contract OuterContract {
 `;
 
 const __INNER = `
-pragma solidity ^0.7.0;
+pragma solidity ^0.8.0;
 
 contract InnerContract {
   event Inner();
@@ -45,7 +45,7 @@ contract InnerContract {
 `;
 
 const __IMMUTABLE = `
-pragma solidity ^0.7.0;
+pragma solidity ^0.8.0;
 
 contract ImmutableTest {
   uint immutable x = 35;
@@ -63,7 +63,7 @@ library TestLibrary {
 `;
 
 const __CREATION = `
-pragma solidity ^0.7.0;
+pragma solidity ^0.8.0;
 
 contract CreationTest {
   function run() public {
@@ -79,12 +79,37 @@ contract Created {
 }
 `;
 
+const __YUL_IMMUTABLE = `
+object "YulImmutableTest" {
+  code {
+    let size := datasize("runtime")
+    let offset := dataoffset("runtime")
+    setimmutable(offset, "secret", 1)
+    datacopy(0, offset, size)
+    return(0, size)
+  }
+  object "runtime" {
+    code {
+      mstore(
+        0,
+        xor(
+          loadimmutable("secret"),
+          linkersymbol("project:/contracts/ImmutableTest.sol:TestLibrary")
+        )
+      )
+      return(0, 0x20)
+    }
+  }
+}
+`;
+
 const __MIGRATION = `
 let OuterContract = artifacts.require("OuterContract");
 let InnerContract = artifacts.require("InnerContract");
 let ImmutableTest = artifacts.require("ImmutableTest");
 let TestLibrary = artifacts.require("TestLibrary");
 let CreationTest = artifacts.require("CreationTest");
+let YulImmutableTest = artifacts.require("YulImmutableTest");
 
 module.exports = async function(deployer) {
   await deployer.deploy(InnerContract);
@@ -94,6 +119,8 @@ module.exports = async function(deployer) {
   await deployer.link(TestLibrary, ImmutableTest);
   await deployer.deploy(ImmutableTest);
   await deployer.deploy(CreationTest);
+  await deployer.link(TestLibrary, YulImmutableTest);
+  await deployer.deploy(YulImmutableTest);
 };
 `;
 
@@ -105,17 +132,26 @@ let sources = {
   "OuterLibrary.sol": __OUTER,
   "InnerContract.sol": __INNER,
   "ImmutableTest.sol": __IMMUTABLE,
-  "CreationTest.sol": __CREATION
+  "CreationTest.sol": __CREATION,
+  "YulImmutableTest.yul": __YUL_IMMUTABLE
 };
 
 describe("Contexts", function () {
-  var provider;
-
-  var abstractions;
-  var compilations;
+  let provider;
+  let abstractions;
+  let compilations;
 
   before("Create Provider", async function () {
-    provider = Ganache.provider({ seed: "debugger", gasLimit: 7000000 });
+    provider = Ganache.provider({
+      seed: "debugger",
+      gasLimit: 7000000,
+      logging: {
+        quiet: true
+      },
+      miner: {
+        instamine: "strict"
+      }
+    });
   });
 
   before("Prepare contracts and artifacts", async function () {
@@ -189,6 +225,27 @@ describe("Contexts", function () {
     assert.equal(affectedInstances[address].contractName, "ImmutableTest");
     assert.property(affectedInstances, libraryAddress);
     assert.equal(affectedInstances[libraryAddress].contractName, "TestLibrary");
+  });
+
+  it("correctly identifies context in presence of linkersymbols and immutables (Yul)", async function () {
+    let ImmutableTest = await abstractions.YulImmutableTest.deployed();
+    let address = ImmutableTest.address;
+
+    let result = await ImmutableTest.sendTransaction({ data: "0x" });
+    let txHash = result.tx;
+
+    let bugger = await Debugger.forTx(txHash, {
+      provider,
+      compilations,
+      lightMode: true
+    });
+    debug("debugger ready");
+
+    let affectedInstances = bugger.view(sessionSelector.info.affectedInstances);
+    debug("affectedInstances: %o", affectedInstances);
+
+    assert.property(affectedInstances, address);
+    assert.equal(affectedInstances[address].contractName, "YulImmutableTest");
   });
 
   it("determines encoded constructor arguments for creations", async function () {

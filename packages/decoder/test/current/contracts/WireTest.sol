@@ -1,4 +1,5 @@
-pragma solidity ^0.6.1;
+//SPDX-License-Identifier: MIT
+pragma solidity ^0.8.8;
 pragma experimental ABIEncoderV2;
 
 contract WireTestParent {
@@ -11,8 +12,6 @@ contract WireTestParent {
 
   //no constructor
 
-  event Overridden(uint);
-
   function inheritedReturn() public pure returns (uint) {
     return 1;
   }
@@ -20,8 +19,6 @@ contract WireTestParent {
 
 abstract contract WireTestAbstract {
   event AbstractEvent();
-
-  event AbstractOverridden(uint indexed);
 
   function danger() public virtual;
 
@@ -39,11 +36,13 @@ enum GlobalEnum {
 
 contract WireTest is WireTestParent, WireTestAbstract {
 
+  type MyInt is int8;
+
   function notImplemented() public {
     emit Done();
   } //just a dummy function, not 
 
-  constructor(bool status, bytes memory info, Ternary whoknows) public {
+  constructor(bool status, bytes memory info, Ternary whoknows) {
     deepStruct["blornst"].push();
     deepStruct["blornst"].push();
     deepString.push();
@@ -73,10 +72,10 @@ contract WireTest is WireTestParent, WireTestAbstract {
     Yes, No, MaybeSo
   }
 
-  event EmitStuff(Triple, address[2], string[]);
+  event EmitStuff(Triple, address[2], string[], MyInt);
 
-  function emitStuff(Triple memory p, address[2] memory precompiles, string[] memory strings) public {
-    emit EmitStuff(p, precompiles, strings);
+  function emitStuff(Triple memory p, address[2] memory precompiles, string[] memory strings, MyInt x) public {
+    emit EmitStuff(p, precompiles, strings, x);
   }
 
   event MoreStuff(WireTest, uint[] data);
@@ -154,7 +153,7 @@ contract WireTest is WireTestParent, WireTestAbstract {
 
   event AnonUints(uint indexed, uint indexed, uint indexed, uint indexed) anonymous;
   event NonAnon(uint indexed, uint indexed, uint indexed);
-  event ObviouslyAnon(byte) anonymous;
+  event ObviouslyAnon(bytes1) anonymous;
 
   function anonymousTest() public {
     //first test: unambiguous
@@ -170,19 +169,16 @@ contract WireTest is WireTestParent, WireTestAbstract {
   mapping(string => Triple[]) public deepStruct;
   mapping(string => string)[] public deepString;
 
-  event Overridden(uint indexed);
-  event AbstractOverridden(uint);
-
-  function interfaceAndOverrideTest() public {
-    emit AbstractEvent();
-    emit AbstractOverridden(107);
-    emit WireTestAbstract.AbstractOverridden(683);
-    emit Overridden(107);
-    emit WireTestParent.Overridden(683);
-  }
-
-  function returnsStuff() public pure returns (Triple memory, Ternary) {
-    return (Triple(-1, 0x0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef, hex"deadbeef"), Ternary.No);
+  function returnsStuff() public pure returns (Triple memory, Ternary, MyInt) {
+    return (
+      Triple(
+        -1,
+        0x0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef,
+        hex"deadbeef"
+      ),
+      Ternary.No,
+      MyInt.wrap(-1)
+    );
   }
 
   function overriddenReturn() public pure override returns (uint) {
@@ -193,7 +189,39 @@ contract WireTest is WireTestParent, WireTestAbstract {
   }
 
   function boom() public returns (uint) {
-    selfdestruct(address(this));
+    selfdestruct(payable(address((this))));
+  }
+
+  event SemiAmbiguousEvent(uint indexed, uint);
+
+  function extrasTestSome() public {
+    emit SemiAmbiguousEvent(1, 2);
+  }
+
+  function extrasTestNone(address test) public returns (bool, bytes memory) {
+    return test.delegatecall(
+      abi.encodeWithSignature("run()")
+    );
+  }
+
+  error UnambiguousError(int, int);
+
+  function throwUnambiguous() public pure {
+    revert UnambiguousError(-1, -2);
+  }
+
+  function callAndThrow() public pure {
+    WireTestLibrary.throwUnambiguous();
+  }
+
+  error h9316(bytes32); //ambiguous with b2072(uint)
+
+  function throwAmbiguous() public pure {
+    revert h9316(hex"");
+  }
+
+  function callAndThrowAmbiguous() public pure {
+    WireTestLibrary.throwAmbiguous();
   }
 
 }
@@ -215,4 +243,25 @@ library WireTestLibrary {
   }
 
   event AnonUint8s(uint8 indexed, uint8 indexed, uint8 indexed, uint8 indexed) anonymous;
+
+  error LibraryError();
+
+  function throwUnambiguous() external pure {
+    revert LibraryError();
+  }
+
+  error b27072(uint); //ambiguous with h9316(bytes32)
+
+  function throwAmbiguous() external pure {
+    revert b27072(0);
+  }
+}
+
+contract WireTestRedHerring {
+  event SemiAmbiguousEvent(uint, uint indexed);
+  event NonAmbiguousEvent();
+
+  function run() public {
+    emit NonAmbiguousEvent();
+  }
 }

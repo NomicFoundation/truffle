@@ -1,9 +1,9 @@
 import debugModule from "debug";
-const debug = debugModule("test:load"); // eslint-disable-line no-unused-vars
+const debug = debugModule("debugger:test:load");
 
 import { assert } from "chai";
 
-import Ganache from "ganache-core";
+import Ganache from "ganache";
 
 import { prepareContracts } from "./helpers";
 import * as Codec from "@truffle/codec";
@@ -13,7 +13,7 @@ import trace from "lib/trace/selectors";
 import controller from "lib/controller/selectors";
 
 const __TWOCONTRACTS = `
-pragma solidity ^0.7.0;
+pragma solidity ^0.8.0;
 
 contract Contract1 {
   uint x;
@@ -35,13 +35,21 @@ let sources = {
 };
 
 describe("Loading and unloading transactions", function () {
-  var provider;
-
-  var abstractions;
-  var compilations;
+  let provider;
+  let abstractions;
+  let compilations;
 
   before("Create Provider", async function () {
-    provider = Ganache.provider({ seed: "debugger", gasLimit: 7000000 });
+    provider = Ganache.provider({
+      seed: "debugger",
+      gasLimit: 7000000,
+      logging: {
+        quiet: true
+      },
+      miner: {
+        instamine: "strict"
+      }
+    });
   });
 
   before("Prepare contracts and artifacts", async function () {
@@ -53,6 +61,7 @@ describe("Loading and unloading transactions", function () {
   });
 
   it("Starts in transactionless mode and loads a transaction", async function () {
+    this.timeout(4000);
     let instance = await abstractions.Contract1.deployed();
     let receipt = await instance.run();
     let txHash = receipt.tx;
@@ -65,8 +74,8 @@ describe("Loading and unloading transactions", function () {
     assert.isFalse(bugger.view(trace.loaded));
     await bugger.load(txHash);
     assert.isTrue(bugger.view(trace.loaded));
-    await bugger.continueUntilBreakpoint(); //continue to end
-    const variables = Codec.Format.Utils.Inspect.nativizeVariables(
+    await bugger.runToEnd();
+    const variables = Codec.Format.Utils.Inspect.unsafeNativizeVariables(
       await bugger.variables()
     );
     const expected = { x: 1 };
@@ -74,6 +83,7 @@ describe("Loading and unloading transactions", function () {
   });
 
   it("Unloads a transaction and loads a new one", async function () {
+    this.timeout(4000);
     let instance1 = await abstractions.Contract1.deployed();
     let receipt1 = await instance1.run();
     let txHash1 = receipt1.tx;
@@ -88,8 +98,8 @@ describe("Loading and unloading transactions", function () {
     });
 
     assert.isTrue(bugger.view(trace.loaded));
-    await bugger.continueUntilBreakpoint(); //continue to end
-    let variables = Codec.Format.Utils.Inspect.nativizeVariables(
+    await bugger.runToEnd();
+    let variables = Codec.Format.Utils.Inspect.unsafeNativizeVariables(
       await bugger.variables()
     );
     let expected = { x: 1 };
@@ -98,8 +108,8 @@ describe("Loading and unloading transactions", function () {
     assert.isFalse(bugger.view(trace.loaded));
     await bugger.load(txHash2);
     assert.isTrue(bugger.view(trace.loaded));
-    await bugger.continueUntilBreakpoint(); //continue to end
-    variables = Codec.Format.Utils.Inspect.nativizeVariables(
+    await bugger.runToEnd();
+    variables = Codec.Format.Utils.Inspect.unsafeNativizeVariables(
       await bugger.variables()
     );
     expected = { y: 2 };

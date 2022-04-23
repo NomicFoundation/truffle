@@ -1,20 +1,19 @@
 import debugModule from "debug";
-const debug = debugModule("test:data:calldata");
+const debug = debugModule("debugger:test:data:calldata");
 
 import { assert } from "chai";
 
-import Ganache from "ganache-core";
+import Ganache from "ganache";
 
 import { prepareContracts, lineOf } from "../helpers";
 import Debugger from "lib/debugger";
 
 import * as Codec from "@truffle/codec";
 
-import solidity from "lib/solidity/selectors";
+import sourcemapping from "lib/sourcemapping/selectors";
 
 const __CALLDATA = `
-pragma solidity ^0.7.0;
-pragma experimental ABIEncoderV2;
+pragma solidity ^0.8.0;
 
 contract CalldataTest {
 
@@ -74,6 +73,11 @@ contract CalldataTest {
     emit Done(); //break slice
   }
 
+  fallback(bytes calldata input) external returns (bytes memory output) {
+    output = input;
+    emit Done(); //break fallback
+  }
+
 }
 
 library CalldataLibrary {
@@ -106,13 +110,21 @@ let migrations = {
 };
 
 describe("Calldata Decoding", function () {
-  var provider;
-
-  var abstractions;
-  var compilations;
+  let provider;
+  let abstractions;
+  let compilations;
 
   before("Create Provider", async function () {
-    provider = Ganache.provider({ seed: "debugger", gasLimit: 7000000 });
+    provider = Ganache.provider({
+      seed: "debugger",
+      gasLimit: 7000000,
+      logging: {
+        quiet: true
+      },
+      miner: {
+        instamine: "strict"
+      }
+    });
   });
 
   before("Prepare contracts and artifacts", async function () {
@@ -131,18 +143,16 @@ describe("Calldata Decoding", function () {
 
     let bugger = await Debugger.forTx(txHash, { provider, compilations });
 
-    let sourceId = bugger.view(solidity.current.source).id;
-    let compilationId = bugger.view(solidity.current.source).compilationId;
-    let source = bugger.view(solidity.current.source).source;
+    let sourceId = bugger.view(sourcemapping.current.source).id;
+    let source = bugger.view(sourcemapping.current.source).source;
     await bugger.addBreakpoint({
       sourceId,
-      compilationId,
       line: lineOf("break multi", source)
     });
 
     await bugger.continueUntilBreakpoint();
 
-    const variables = Codec.Format.Utils.Inspect.nativizeVariables(
+    const variables = Codec.Format.Utils.Inspect.unsafeNativizeVariables(
       await bugger.variables()
     );
 
@@ -163,18 +173,16 @@ describe("Calldata Decoding", function () {
 
     let bugger = await Debugger.forTx(txHash, { provider, compilations });
 
-    let sourceId = bugger.view(solidity.current.source).id;
-    let compilationId = bugger.view(solidity.current.source).compilationId;
-    let source = bugger.view(solidity.current.source).source;
+    let sourceId = bugger.view(sourcemapping.current.source).id;
+    let source = bugger.view(sourcemapping.current.source).source;
     await bugger.addBreakpoint({
       sourceId,
-      compilationId,
       line: lineOf("break simple", source)
     });
 
     await bugger.continueUntilBreakpoint();
 
-    const variables = Codec.Format.Utils.Inspect.nativizeVariables(
+    const variables = Codec.Format.Utils.Inspect.unsafeNativizeVariables(
       await bugger.variables()
     );
 
@@ -193,18 +201,16 @@ describe("Calldata Decoding", function () {
 
     let bugger = await Debugger.forTx(txHash, { provider, compilations });
 
-    let sourceId = bugger.view(solidity.current.source).id;
-    let compilationId = bugger.view(solidity.current.source).compilationId;
-    let source = bugger.view(solidity.current.source).source;
+    let sourceId = bugger.view(sourcemapping.current.source).id;
+    let source = bugger.view(sourcemapping.current.source).source;
     await bugger.addBreakpoint({
       sourceId,
-      compilationId,
       line: lineOf("break stringBox", source)
     });
 
     await bugger.continueUntilBreakpoint();
 
-    const variables = Codec.Format.Utils.Inspect.nativizeVariables(
+    const variables = Codec.Format.Utils.Inspect.unsafeNativizeVariables(
       await bugger.variables()
     );
 
@@ -228,18 +234,16 @@ describe("Calldata Decoding", function () {
       compilations
     });
 
-    let sourceId = bugger.view(solidity.current.source).id;
-    let compilationId = bugger.view(solidity.current.source).compilationId;
-    let source = bugger.view(solidity.current.source).source;
+    let sourceId = bugger.view(sourcemapping.current.source).id;
+    let source = bugger.view(sourcemapping.current.source).source;
     await bugger.addBreakpoint({
       sourceId,
-      compilationId,
       line: lineOf("break static", source)
     });
 
     await bugger.continueUntilBreakpoint();
 
-    const variables = Codec.Format.Utils.Inspect.nativizeVariables(
+    const variables = Codec.Format.Utils.Inspect.unsafeNativizeVariables(
       await bugger.variables()
     );
 
@@ -261,18 +265,16 @@ describe("Calldata Decoding", function () {
       compilations
     });
 
-    let sourceId = bugger.view(solidity.current.source).id;
-    let compilationId = bugger.view(solidity.current.source).compilationId;
-    let source = bugger.view(solidity.current.source).source;
+    let sourceId = bugger.view(sourcemapping.current.source).id;
+    let source = bugger.view(sourcemapping.current.source).source;
     await bugger.addBreakpoint({
       sourceId,
-      compilationId,
       line: lineOf("break delegate", source)
     });
 
     await bugger.continueUntilBreakpoint();
 
-    const variables = Codec.Format.Utils.Inspect.nativizeVariables(
+    const variables = Codec.Format.Utils.Inspect.unsafeNativizeVariables(
       await bugger.variables()
     );
 
@@ -294,18 +296,16 @@ describe("Calldata Decoding", function () {
       compilations
     });
 
-    let sourceId = bugger.view(solidity.current.source).id;
-    let compilationId = bugger.view(solidity.current.source).compilationId;
-    let source = bugger.view(solidity.current.source).source;
+    let sourceId = bugger.view(sourcemapping.current.source).id;
+    let source = bugger.view(sourcemapping.current.source).source;
     await bugger.addBreakpoint({
       sourceId,
-      compilationId,
       line: lineOf("break slice", source)
     });
 
     await bugger.continueUntilBreakpoint();
 
-    const variables = Codec.Format.Utils.Inspect.nativizeVariables(
+    const variables = Codec.Format.Utils.Inspect.unsafeNativizeVariables(
       await bugger.variables()
     );
 
@@ -314,5 +314,48 @@ describe("Calldata Decoding", function () {
     };
 
     assert.deepInclude(variables, expectedResult);
+  });
+
+  it("Decodes fallback function input and output", async function () {
+    this.timeout(6000);
+    let instance = await abstractions.CalldataTest.deployed();
+    let receipt = await instance.sendTransaction({ data: "0xdeadbeef" });
+    let txHash = receipt.tx;
+
+    let bugger = await Debugger.forTx(txHash, {
+      provider,
+      compilations
+    });
+
+    let sourceId = bugger.view(sourcemapping.current.source).id;
+    let source = bugger.view(sourcemapping.current.source).source;
+    await bugger.addBreakpoint({
+      sourceId,
+      line: lineOf("break fallback", source)
+    });
+
+    await bugger.continueUntilBreakpoint();
+
+    const variables = Codec.Format.Utils.Inspect.unsafeNativizeVariables(
+      await bugger.variables()
+    );
+
+    debug("variables: %O", variables);
+
+    const expectedResult = {
+      input: "0xdeadbeef",
+      output: "0xdeadbeef"
+    };
+
+    assert.deepInclude(variables, expectedResult);
+
+    await bugger.runToEnd();
+
+    const decodings = await bugger.returnValue();
+
+    assert.lengthOf(decodings, 1);
+    const decoding = decodings[0];
+    assert.equal(decoding.kind, "returnmessage");
+    assert.equal(decoding.data, "0xdeadbeef");
   });
 });

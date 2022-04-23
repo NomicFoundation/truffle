@@ -1,12 +1,12 @@
 import debugModule from "debug";
 const debug = debugModule("codec:special:decode");
 
-import * as Format from "@truffle/codec/format";
+import type * as Format from "@truffle/codec/format";
 import * as Basic from "@truffle/codec/basic";
 import * as Bytes from "@truffle/codec/bytes";
 import * as Compiler from "@truffle/codec/compiler";
-import * as Pointer from "@truffle/codec/pointer";
-import { DecoderRequest } from "@truffle/codec/types";
+import type * as Pointer from "@truffle/codec/pointer";
+import type { DecoderRequest } from "@truffle/codec/types";
 import * as Evm from "@truffle/codec/evm";
 
 export function* decodeSpecial(
@@ -81,7 +81,7 @@ export function* decodeMagic(
         kind: "value" as const,
         value: {
           origin: yield* Basic.Decode.decodeBasic(
-            externalAddressType(info.currentContext.compiler),
+            senderType(info.currentContext.compiler),
             { location: "special" as const, special: "origin" },
             info
           ),
@@ -98,7 +98,7 @@ export function* decodeMagic(
     case "block":
       let block: { [field: string]: Format.Values.Result } = {
         coinbase: yield* Basic.Decode.decodeBasic(
-          externalAddressType(info.currentContext.compiler),
+          coinbaseType(info.currentContext.compiler),
           { location: "special" as const, special: "coinbase" },
           info
         )
@@ -106,6 +106,12 @@ export function* decodeMagic(
       //the other ones are all uint's, so let's handle them all at once; due to
       //the lack of generator arrow functions, we do it by mutating block
       const variables = ["difficulty", "gaslimit", "number", "timestamp"];
+      if (solidityVersionHasChainId(info.currentContext.compiler)) {
+        variables.push("chainid");
+      }
+      if (solidityVersionHasBaseFee(info.currentContext.compiler)) {
+        variables.push("basefee");
+      }
       for (let variable of variables) {
         block[variable] = yield* Basic.Decode.decodeBasic(
           {
@@ -124,7 +130,6 @@ export function* decodeMagic(
   }
 }
 
-//NOTE: this is likely going to change again in 0.7.x!  be ready!
 function senderType(
   compiler: Compiler.CompilerVersion
 ): Format.Types.AddressType {
@@ -141,10 +146,16 @@ function senderType(
         kind: "specific",
         payable: true
       };
+    default:
+      return {
+        typeClass: "address",
+        kind: "specific",
+        payable: false
+      };
   }
 }
 
-function externalAddressType(
+function coinbaseType(
   compiler: Compiler.CompilerVersion
 ): Format.Types.AddressType {
   switch (Compiler.Utils.solidityFamily(compiler)) {
@@ -155,10 +166,40 @@ function externalAddressType(
         kind: "general"
       };
     case "0.5.x":
+    case "0.8.x":
+    case "0.8.7+":
+    case "0.8.9+":
       return {
         typeClass: "address",
         kind: "specific",
         payable: true
       };
+  }
+}
+
+function solidityVersionHasChainId(
+  compiler: Compiler.CompilerVersion
+): boolean {
+  switch (Compiler.Utils.solidityFamily(compiler)) {
+    case "unknown":
+    case "pre-0.5.0":
+    case "0.5.x":
+      return false;
+    default:
+      return true;
+  }
+}
+
+function solidityVersionHasBaseFee(
+  compiler: Compiler.CompilerVersion
+): boolean {
+  switch (Compiler.Utils.solidityFamily(compiler)) {
+    case "unknown":
+    case "pre-0.5.0":
+    case "0.5.x":
+    case "0.8.x":
+      return false;
+    default:
+      return true;
   }
 }

@@ -1,42 +1,42 @@
 import debugModule from "debug";
-const debug = debugModule("test:data:ids");
+const debug = debugModule("debugger:test:data:ids");
 
 import { assert } from "chai";
 
-import Ganache from "ganache-core";
+import Ganache from "ganache";
 
 import { prepareContracts, lineOf } from "../helpers";
 import Debugger from "lib/debugger";
 
 import trace from "lib/trace/selectors";
-import solidity from "lib/solidity/selectors";
+import sourcemapping from "lib/sourcemapping/selectors";
 import * as Codec from "@truffle/codec";
 
 const __FACTORIAL = `
-pragma solidity ^0.7.0;
+pragma solidity ^0.8.0;
 
 contract FactorialTest {
 
   uint lastResult;
 
   function factorial(uint n) public returns(uint nbang) {
-    uint prev;
     uint prevFac;
     nbang = n;
-    prev = n - 1; //break here #1 (12)
+    lastResult = nbang; //break here #1
     if (n > 0) {
+      uint prev = n - 1;
       prevFac = factorial(n - 1);
       nbang = n * prevFac;
     } else {
       nbang = 1;
     }
-    lastResult = nbang; //break here #2 (22)
+    lastResult = nbang; //break here #2
   }
 }
 `;
 
 const __ADDRESS = `
-pragma solidity ^0.7.0;
+pragma solidity ^0.8.0;
 
 contract AddressTest {
 
@@ -71,7 +71,7 @@ contract SecretByte {
 `;
 
 const __INTERVENING = `
-pragma solidity ^0.7.0;
+pragma solidity ^0.8.0;
 
 import "./InterveningLib.sol";
 
@@ -119,7 +119,7 @@ contract Inner {
 `;
 
 const __INTERVENINGLIB = `
-pragma solidity ^0.7.0;
+pragma solidity ^0.8.0;
 
 library InterveningLib {
 
@@ -130,7 +130,7 @@ library InterveningLib {
 `;
 
 const __MODIFIERS = `
-pragma solidity ^0.7.0;
+pragma solidity ^0.8.0;
 
 contract ModifierTest {
 
@@ -148,6 +148,23 @@ contract ModifierTest {
 }
 `;
 
+const __POPQUIZ = `
+pragma solidity ^0.8.0;
+
+contract PopTest {
+
+  event Here(uint);
+
+  function run(uint x) public {
+    {
+      uint something = 3;
+      emit Here(something);
+    }
+    emit Here(x); //BREAK
+  }
+}
+`;
+
 const __MIGRATION = `
 let Intervening = artifacts.require("Intervening");
 let Inner = artifacts.require("Inner");
@@ -155,6 +172,7 @@ let AddressTest = artifacts.require("AddressTest");
 let FactorialTest = artifacts.require("FactorialTest");
 let InterveningLib = artifacts.require("InterveningLib");
 let ModifierTest = artifacts.require("ModifierTest");
+let PopTest = artifacts.require("PopTest");
 
 module.exports = async function(deployer) {
   await deployer.deploy(InterveningLib);
@@ -165,6 +183,7 @@ module.exports = async function(deployer) {
   await deployer.deploy(AddressTest);
   await deployer.deploy(FactorialTest);
   await deployer.deploy(ModifierTest);
+  await deployer.deploy(PopTest);
 };
 `;
 
@@ -173,7 +192,8 @@ let sources = {
   "AddressTest.sol": __ADDRESS,
   "Intervening.sol": __INTERVENING,
   "InterveningLib.sol": __INTERVENINGLIB,
-  "ModifierTest.sol": __MODIFIERS
+  "ModifierTest.sol": __MODIFIERS,
+  "PopTest.sol": __POPQUIZ
 };
 
 let migrations = {
@@ -181,13 +201,21 @@ let migrations = {
 };
 
 describe("Variable IDs", function () {
-  var provider;
-
-  var abstractions;
-  var compilations;
+  let provider;
+  let abstractions;
+  let compilations;
 
   before("Create Provider", async function () {
-    provider = Ganache.provider({ seed: "debugger", gasLimit: 7000000 });
+    provider = Ganache.provider({
+      seed: "debugger",
+      gasLimit: 7000000,
+      miner: {
+        instamine: "strict"
+      },
+      logging: {
+        quiet: true
+      }
+    });
   });
 
   before("Prepare contracts and artifacts", async function () {
@@ -206,19 +234,16 @@ describe("Variable IDs", function () {
 
     let bugger = await Debugger.forTx(txHash, { provider, compilations });
 
-    debug("sourceId %d", bugger.view(solidity.current.source).id);
+    debug("sourceId %d", bugger.view(sourcemapping.current.source).id);
 
-    let sourceId = bugger.view(solidity.current.source).id;
-    let compilationId = bugger.view(solidity.current.source).compilationId;
-    let source = bugger.view(solidity.current.source).source;
+    let sourceId = bugger.view(sourcemapping.current.source).id;
+    let source = bugger.view(sourcemapping.current.source).source;
     await bugger.addBreakpoint({
       sourceId,
-      compilationId,
       line: lineOf("break here #1", source)
     });
     await bugger.addBreakpoint({
       sourceId,
-      compilationId,
       line: lineOf("break here #2", source)
     });
 
@@ -227,7 +252,9 @@ describe("Variable IDs", function () {
     await bugger.continueUntilBreakpoint();
     while (!bugger.view(trace.finished)) {
       values.push(
-        Codec.Format.Utils.Inspect.nativize(await bugger.variable("nbang"))
+        Codec.Format.Utils.Inspect.unsafeNativize(
+          await bugger.variable("nbang")
+        )
       );
       await bugger.continueUntilBreakpoint();
     }
@@ -243,19 +270,16 @@ describe("Variable IDs", function () {
 
     let bugger = await Debugger.forTx(txHash, { provider, compilations });
 
-    debug("sourceId %d", bugger.view(solidity.current.source).id);
+    debug("sourceId %d", bugger.view(sourcemapping.current.source).id);
 
-    let sourceId = bugger.view(solidity.current.source).id;
-    let compilationId = bugger.view(solidity.current.source).compilationId;
-    let source = bugger.view(solidity.current.source).source;
+    let sourceId = bugger.view(sourcemapping.current.source).id;
+    let source = bugger.view(sourcemapping.current.source).source;
     await bugger.addBreakpoint({
       sourceId,
-      compilationId,
       line: lineOf("BREAK HERE #1", source)
     });
     await bugger.addBreakpoint({
       sourceId,
-      compilationId,
       line: lineOf("BREAK HERE #2", source)
     });
 
@@ -265,10 +289,10 @@ describe("Variable IDs", function () {
     await bugger.continueUntilBreakpoint();
     while (!bugger.view(trace.finished)) {
       xValues.push(
-        Codec.Format.Utils.Inspect.nativize(await bugger.variable("x"))
+        Codec.Format.Utils.Inspect.unsafeNativize(await bugger.variable("x"))
       );
       tempValues.push(
-        Codec.Format.Utils.Inspect.nativize(await bugger.variable("temp"))
+        Codec.Format.Utils.Inspect.unsafeNativize(await bugger.variable("temp"))
       );
       await bugger.continueUntilBreakpoint();
     }
@@ -285,14 +309,12 @@ describe("Variable IDs", function () {
 
     let bugger = await Debugger.forTx(txHash, { provider, compilations });
 
-    debug("sourceId %d", bugger.view(solidity.current.source).id);
+    debug("sourceId %d", bugger.view(sourcemapping.current.source).id);
 
-    let sourceId = bugger.view(solidity.current.source).id;
-    let compilationId = bugger.view(solidity.current.source).compilationId;
-    let source = bugger.view(solidity.current.source).source;
+    let sourceId = bugger.view(sourcemapping.current.source).id;
+    let source = bugger.view(sourcemapping.current.source).source;
     await bugger.addBreakpoint({
       sourceId,
-      compilationId,
       line: lineOf("break here #1", source)
     });
     await bugger.continueUntilBreakpoint();
@@ -307,17 +329,38 @@ describe("Variable IDs", function () {
 
     let bugger = await Debugger.forTx(txHash, { provider, compilations });
 
-    debug("sourceId %d", bugger.view(solidity.current.source).id);
+    debug("sourceId %d", bugger.view(sourcemapping.current.source).id);
 
-    let sourceId = bugger.view(solidity.current.source).id;
-    let compilationId = bugger.view(solidity.current.source).compilationId;
-    let source = bugger.view(solidity.current.source).source;
+    let sourceId = bugger.view(sourcemapping.current.source).id;
+    let source = bugger.view(sourcemapping.current.source).source;
     await bugger.addBreakpoint({
       sourceId,
-      compilationId,
       line: lineOf("break here #2", source)
     });
     await bugger.continueUntilBreakpoint();
     assert.property(await bugger.variables(), "flag");
+  });
+
+  it("Is not thrown off by bare blocks", async function () {
+    this.timeout(3000);
+    let instance = await abstractions.PopTest.deployed();
+    let receipt = await instance.run(107);
+    let txHash = receipt.tx;
+
+    let bugger = await Debugger.forTx(txHash, { provider, compilations });
+
+    debug("sourceId %d", bugger.view(sourcemapping.current.source).id);
+
+    let sourceId = bugger.view(sourcemapping.current.source).id;
+    let source = bugger.view(sourcemapping.current.source).source;
+    await bugger.addBreakpoint({
+      sourceId,
+      line: lineOf("BREAK", source)
+    });
+    await bugger.continueUntilBreakpoint();
+    assert.strictEqual(
+      Codec.Format.Utils.Inspect.unsafeNativize(await bugger.variable("x")),
+      107
+    );
   });
 });

@@ -1,5 +1,7 @@
 const assert = require("assert");
 const utils = require("../dist/lib/utils/unbox");
+const axios = require("axios");
+const sinon = require("sinon");
 
 describe("utils", () => {
   describe("installBoxDependencies", () => {
@@ -21,14 +23,45 @@ describe("utils", () => {
   });
 
   describe("fetchRepository", () => {
-    it("rejects when passed non-strings and non-objects", () => {
-      assert.rejects(async () => {
+    it("rejects when passed non-strings and non-objects", async () => {
+      await assert.rejects(async () => {
         await utils.fetchRepository(false);
       }, "should have rejected!");
 
-      assert.rejects(async () => {
+      await assert.rejects(async () => {
         await utils.fetchRepository(123214);
       }, "should have rejected!");
+    });
+  });
+
+  describe("verifySourcePath", async () => {
+    const errorStatus = 401;
+    const errorMessage = "Network error: oh noes!";
+    const authError = {
+      response: {
+        status: errorStatus
+      },
+      message: errorMessage
+    };
+    let url;
+
+    before(async () => {
+      url = "https://github.com/truffle-box/bare-box";
+      sinon.stub(axios, "head").throws(authError);
+    });
+
+    it("Includes network error message on non 404 failure", async () => {
+      try {
+        await utils.verifyVCSURL(url);
+        assert(false, "verifyVCSURL should have thrown!");
+      } catch (error) {
+        const { response, message } = error;
+        assert.equal(response.status, errorStatus);
+        assert(
+          message.endsWith(errorMessage),
+          "Axios error message should be the suffix"
+        );
+      }
     });
   });
 });

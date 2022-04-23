@@ -1,4 +1,4 @@
-import * as Format from "@truffle/codec/format";
+import type * as Format from "@truffle/codec/format";
 import * as Conversion from "@truffle/codec/conversion";
 import * as Evm from "@truffle/codec/evm";
 
@@ -15,6 +15,8 @@ import * as Evm from "@truffle/codec/evm";
 export function encodeBasic(input: Format.Values.Value): Uint8Array {
   let bytes: Uint8Array;
   switch (input.type.typeClass) {
+    case "userDefinedValueType":
+      return encodeBasic((<Format.Values.UserDefinedValueTypeValue>input).value);
     case "uint":
     case "int":
       return Conversion.toBytes(

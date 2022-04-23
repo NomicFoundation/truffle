@@ -1,4 +1,3 @@
-import assignIn from "lodash.assignin";
 import * as path from "path";
 import Provider from "@truffle/provider";
 import TruffleConfig from "./";
@@ -20,10 +19,20 @@ export const getInitialConfig = ({
     truffle_directory,
     working_directory,
     network,
-    networks: {},
+    networks: {
+      dashboard: {
+        network_id: "*",
+        networkCheckTimeout: 120000,
+        url: "http://localhost:24012/rpc",
+        skipDryRun: true
+      }
+    },
     verboseRpc: false,
     gas: null,
     gasPrice: null,
+    maxFeePerGas: null,
+    maxPriorityFeePerGas: null,
+    type: undefined, //don't use null here!
     from: null,
     confirmations: 0,
     timeoutBlocks: 0,
@@ -32,6 +41,12 @@ export const getInitialConfig = ({
     build: null,
     resolver: null,
     artifactor: null,
+    quiet: false,
+    dashboard: {
+      host: "localhost",
+      port: 24012,
+      verbose: false
+    },
     ethpm: {
       ipfs_host: "ipfs.infura.io",
       ipfs_protocol: "https",
@@ -43,9 +58,15 @@ export const getInitialConfig = ({
       enabled: false,
       registryAddress: null
     },
+    mocha: {
+      bail: false,
+      grep: null
+    },
     compilers: {
       solc: {
         settings: {
+          //Note: The default solc version is *not* set here!
+          //It's set in compilerSupplier/index.js in compile-solidity
           optimizer: {
             enabled: false,
             runs: 200
@@ -53,7 +74,12 @@ export const getInitialConfig = ({
           remappings: []
         }
       },
-      vyper: {}
+      vyper: {
+        settings: {}
+      }
+    },
+    console: {
+      require: null
     },
     logger: console
   };
@@ -67,12 +93,6 @@ export const configProps = ({
   const resolveDirectory = (value: string): string =>
     path.resolve(configObject.working_directory, value);
 
-  const defaultTXValues = {
-    gas: 6721975,
-    gasPrice: 20000000000, // 20 gwei,
-    from: null
-  };
-
   return {
     // These are already set.
     truffle_directory() {},
@@ -83,10 +103,14 @@ export const configProps = ({
     build() {},
     resolver() {},
     artifactor() {},
+    dashboard() {},
     ethpm() {},
     logger() {},
     compilers() {},
     ens() {},
+    console() {},
+    mocha() {},
+    quiet() {},
 
     build_directory: {
       default: () => path.join(configObject.working_directory, "build"),
@@ -146,7 +170,21 @@ export const configProps = ({
           config = {};
         }
 
-        config = assignIn({}, defaultTXValues, config);
+        if (network === "dashboard") {
+          const { host: configuredHost, port } = configObject.dashboard;
+          const host =
+            configuredHost === "0.0.0.0" ? "localhost" : configuredHost;
+
+          const userOverrides = config;
+
+          config = {
+            network_id: "*",
+            networkCheckTimeout: 120000,
+            ...userOverrides,
+            url: `http://${host}:${port}/rpc`,
+            skipDryRun: true
+          };
+        }
 
         return config;
       },
@@ -161,7 +199,7 @@ export const configProps = ({
         try {
           return configObject.network_config.from;
         } catch (e) {
-          return defaultTXValues.from;
+          return null;
         }
       },
       set() {
@@ -175,7 +213,7 @@ export const configProps = ({
         try {
           return configObject.network_config.gas;
         } catch (e) {
-          return defaultTXValues.gas;
+          return null;
         }
       },
       set() {
@@ -189,12 +227,54 @@ export const configProps = ({
         try {
           return configObject.network_config.gasPrice;
         } catch (e) {
-          return defaultTXValues.gasPrice;
+          return null;
         }
       },
       set() {
         throw new Error(
           "Don't set config.gasPrice directly. Instead, set config.networks and then config.networks[<network name>].gasPrice"
+        );
+      }
+    },
+    maxFeePerGas: {
+      get() {
+        try {
+          return configObject.network_config.maxFeePerGas;
+        } catch (e) {
+          return null;
+        }
+      },
+      set() {
+        throw new Error(
+          "Don't set config.maxFeePerGas directly. Instead, set config.networks and then config.networks[<network name>].maxFeePerGas"
+        );
+      }
+    },
+    maxPriorityFeePerGas: {
+      get() {
+        try {
+          return configObject.network_config.maxPriorityFeePerGas;
+        } catch (e) {
+          return null;
+        }
+      },
+      set() {
+        throw new Error(
+          "Don't set config.maxPriorityFeePerGas directly. Instead, set config.networks and then config.networks[<network name>].maxPriorityFeePerGas"
+        );
+      }
+    },
+    type: {
+      get() {
+        try {
+          return configObject.network_config.type;
+        } catch (e) {
+          return null;
+        }
+      },
+      set() {
+        throw new Error(
+          "Don't set config.type directly. Instead, set config.networks and then config.networks[<network name>].type"
         );
       }
     },
@@ -206,6 +286,7 @@ export const configProps = ({
 
         const options = configObject.network_config;
         options.verboseRpc = configObject.verboseRpc;
+        options.events = configObject.events;
 
         return Provider.create(options);
       },

@@ -3,24 +3,24 @@ const debug = debugModule("codec:format:utils:inspect");
 
 import util from "util";
 import * as Format from "@truffle/codec/format/common";
+import * as Common from "@truffle/codec/common";
+import * as Conversion from "@truffle/codec/conversion";
+import * as EvmUtils from "@truffle/codec/evm/utils";
 import * as Exception from "./exception";
 
 //we'll need to write a typing for the options type ourself, it seems; just
 //going to include the relevant properties here
-interface InspectOptions {
+export interface InspectOptions {
   stylize?: (toMaybeColor: string, style?: string) => string;
   colors: boolean;
   breakLength: number;
 }
 
-//HACK -- inspect options are ridiculous, I swear >_>
-function cleanStylize(options: InspectOptions) {
-  return Object.assign(
-    {},
-    ...Object.entries(options).map(([key, value]) =>
-      key === "stylize" ? {} : { [key]: value }
-    )
-  );
+//HACK?
+function cleanStylize(options: InspectOptions): InspectOptions {
+  const clonedOptions: InspectOptions = { ...options };
+  delete clonedOptions.stylize;
+  return clonedOptions;
 }
 
 /**
@@ -56,6 +56,13 @@ export class ResultInspector {
   result: Format.Values.Result;
   constructor(result: Format.Values.Result) {
     this.result = result;
+  }
+  /**
+   * @dev non-standard alternative interface name used by browser-util-inspect
+   *      package
+   */
+  inspect(depth: number | null, options: InspectOptions): string {
+    return this[util.inspect.custom].bind(this)(depth, options);
   }
   [util.inspect.custom](depth: number | null, options: InspectOptions): string {
     switch (this.result.kind) {
@@ -126,12 +133,12 @@ export class ResultInspector {
           case "mapping":
             return util.inspect(
               new Map(
-                (<Format.Values.MappingValue>(
-                  this.result
-                )).value.map(({ key, value }) => [
-                  new ResultInspector(key),
-                  new ResultInspector(value)
-                ])
+                (<Format.Values.MappingValue>this.result).value.map(
+                  ({ key, value }) => [
+                    new ResultInspector(key),
+                    new ResultInspector(value)
+                  ]
+                )
               ),
               options
             );
@@ -149,6 +156,19 @@ export class ResultInspector {
               ),
               options
             );
+          }
+          case "userDefinedValueType": {
+            const typeName = Format.Types.typeStringWithoutLocation(
+              this.result.type
+            );
+            const coercedResult = <Format.Values.UserDefinedValueTypeValue>(
+              this.result
+            );
+            const inspectOfUnderlying = util.inspect(
+              new ResultInspector(coercedResult.value),
+              options
+            );
+            return `${typeName}.wrap(${inspectOfUnderlying})`; //note only the underlying part is stylized
           }
           case "tuple": {
             let coercedResult = <Format.Values.TupleValue>this.result;
@@ -266,7 +286,10 @@ export class ResultInspector {
                   case "exception":
                     return coercedResult.value.deployedProgramCounter === 0
                       ? options.stylize(`[Function: <zero>]`, "special")
-                      : options.stylize(`[Function: assert(false)]`, "special");
+                      : options.stylize(
+                          `[Function: <uninitialized>]`,
+                          "special"
+                        );
                   case "unknown":
                     let firstLine = `[Function: decoding not supported (raw info:`;
                     let secondLine = `deployed PC=${coercedResult.value.deployedProgramCounter}, constructor PC=${coercedResult.value.constructorProgramCounter})]`;
@@ -288,6 +311,11 @@ export class ResultInspector {
         debug("this.result: %O", this.result);
         let errorResult = <Format.Errors.ErrorResult>this.result; //the hell?? why couldn't it make this inference??
         switch (errorResult.error.kind) {
+          case "WrappedError":
+            return util.inspect(
+              new ResultInspector(errorResult.error.error),
+              options
+            );
           case "UintPaddingError":
             return `Uint has incorrect padding (expected padding: ${errorResult.error.paddingType}) (raw value ${errorResult.error.raw})`;
           case "IntPaddingError":
@@ -353,6 +381,9 @@ export class ResultInspector {
           case "ReadErrorStorage":
           case "ReadErrorBytes":
             return Exception.message(errorResult.error); //yay, these five are already defined!
+          case "StorageNotSuppliedError":
+            //this one has a message, but we're going to special-case it
+            return options.stylize("?", "undefined");
         }
       }
     }
@@ -380,15 +411,11 @@ class ContractInfoInspector {
   }
 }
 
-function enumTypeName(enumType: Format.Types.EnumType) {
+function enumTypeName(enumType: Format.Types.EnumType): string {
   return (
     (enumType.kind === "local" ? enumType.definingContractName + "." : "") +
     enumType.typeName
   );
-}
-
-function styleHexString(hex: string, options: InspectOptions): string {
-  return options.stylize(`hex'${hex.slice(2)}'`, "string");
 }
 
 //this function will be used in the future for displaying circular
@@ -410,16 +437,16 @@ function enumFullName(value: Format.Values.EnumValue): string {
  * WARNING! Do NOT use this function in real code unless you
  * absolutely have to!  Using it in controlled tests is fine,
  * but do NOT use it in real code if you have any better option!
- * See [[nativize]] for why!
+ * See [[unsafeNativize]] for why!
  */
-export function nativizeVariables(variables: {
+export function unsafeNativizeVariables(variables: {
   [name: string]: Format.Values.Result;
 }): { [name: string]: any } {
   return Object.assign(
     {},
     ...Object.entries(variables).map(([name, value]) => {
       try {
-        return { [name]: nativize(value) };
+        return { [name]: unsafeNativize(value) };
       } catch (_) {
         return undefined; //I guess??
       }
@@ -453,11 +480,11 @@ export function nativizeVariables(variables: {
  * this code and dehackify it for your use case, which hopefully is more
  * manageable than the one that caused us to write this.
  */
-export function nativize(result: Format.Values.Result): any {
-  return nativizeWithTable(result, []);
+export function unsafeNativize(result: Format.Values.Result): any {
+  return unsafeNativizeWithTable(result, []);
 }
 
-function nativizeWithTable(
+function unsafeNativizeWithTable(
   result: Format.Values.Result,
   seenSoFar: any[]
 ): any {
@@ -470,9 +497,9 @@ function nativizeWithTable(
         return undefined;
     }
   }
-  //NOTE: for simplicity, only arrays & structs will call nativizeWithTable;
-  //other containers will just call nativize because they can get away with it
-  //(only things that can *be* circular need nativizeWithTable, not things that
+  //NOTE: for simplicity, only arrays & structs will call unsafeNativizeWithTable;
+  //other containers will just call unsafeNativize because they can get away with it
+  //(only things that can *be* circular need unsafeNativizeWithTable, not things that
   //can merely *contain* circularities)
   switch (result.type.typeClass) {
     case "uint":
@@ -519,8 +546,8 @@ function nativizeWithTable(
         let output: any[] = [...coercedResult.value];
         //now, we can't use a map here, or we'll screw things up!
         //we want to *mutate* output, not replace it with a new object
-        for (let index in output) {
-          output[index] = nativizeWithTable(output[index], [
+        for (let index = 0; index < output.length; index++) {
+          output[index] = unsafeNativizeWithTable(output[index], [
             output,
             ...seenSoFar
           ]);
@@ -530,11 +557,16 @@ function nativizeWithTable(
         return seenSoFar[coercedResult.reference - 1];
       }
     }
+    case "userDefinedValueType": {
+      return unsafeNativize(
+        (<Format.Values.UserDefinedValueTypeValue>result).value
+      );
+    }
     case "mapping":
       return Object.assign(
         {},
         ...(<Format.Values.MappingValue>result).value.map(({ key, value }) => ({
-          [nativize(key).toString()]: nativize(value)
+          [unsafeNativize(key).toString()]: unsafeNativize(value)
         }))
       );
     case "struct": {
@@ -553,7 +585,7 @@ function nativizeWithTable(
         //now, we can't use a map here, or we'll screw things up!
         //we want to *mutate* output, not replace it with a new object
         for (let name in output) {
-          output[name] = nativizeWithTable(output[name], [
+          output[name] = unsafeNativizeWithTable(output[name], [
             output,
             ...seenSoFar
           ]);
@@ -570,7 +602,7 @@ function nativizeWithTable(
             {},
             ...(<Format.Values.TypeValueContract>result).value.map(
               ({ name, value }) => ({
-                [name]: nativize(value)
+                [name]: unsafeNativize(value)
               })
             )
           );
@@ -578,20 +610,20 @@ function nativizeWithTable(
           return Object.assign(
             {},
             ...(<Format.Values.TypeValueEnum>result).value.map(enumValue => ({
-              [enumValue.value.name]: nativize(enumValue)
+              [enumValue.value.name]: unsafeNativize(enumValue)
             }))
           );
       }
     case "tuple":
       return (<Format.Values.TupleValue>result).value.map(({ value }) =>
-        nativize(value)
+        unsafeNativize(value)
       );
     case "magic":
       return Object.assign(
         {},
-        ...Object.entries(
-          (<Format.Values.MagicValue>result).value
-        ).map(([key, value]) => ({ [key]: nativize(value) }))
+        ...Object.entries((<Format.Values.MagicValue>result).value).map(
+          ([key, value]) => ({ [key]: unsafeNativize(value) })
+        )
       );
     case "enum":
       return enumFullName(<Format.Values.EnumValue>result);
@@ -622,11 +654,43 @@ function nativizeWithTable(
             case "exception":
               return coercedResult.value.deployedProgramCounter === 0
                 ? `<zero>`
-                : `assert(false)`;
+                : `<uninitialized>`;
             case "unknown":
               return `<decoding not supported>`;
           }
         }
       }
   }
+}
+
+/**
+ * Turns a wrapped access list into a usable form.
+ * Will fail if the input is not a wrapped access list!
+ * Note that the storage keys must be given as uint256, not bytes32.
+ * Primarily meant for internal use.
+ */
+export function nativizeAccessList(
+  wrappedAccessList: Format.Values.ArrayValue //this should really be a more specific type
+): Common.AccessList {
+  return wrappedAccessList.value.map(wrappedAccessListForAddress => {
+    //HACK: we're just going to coerce all over the place here
+    const addressStorageKeysPair = <Format.Values.OptionallyNamedValue[]>(
+      (<Format.Values.TupleValue>wrappedAccessListForAddress).value
+    );
+    const wrappedAddress = <Format.Values.AddressValue>(
+      addressStorageKeysPair[0].value
+    );
+    const wrappedStorageKeys = <Format.Values.ArrayValue>(
+      addressStorageKeysPair[1].value
+    );
+    const wrappedStorageKeysArray = <Format.Values.UintValue[]>(
+      wrappedStorageKeys.value
+    );
+    return {
+      address: wrappedAddress.value.asAddress,
+      storageKeys: wrappedStorageKeysArray.map(wrappedStorageKey =>
+        Conversion.toHexString(wrappedStorageKey.value.asBN, EvmUtils.WORD_SIZE)
+      )
+    };
+  });
 }

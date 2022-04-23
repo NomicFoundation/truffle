@@ -6,26 +6,18 @@
     "target": "es2016",
     "noImplicitAny": true,
     "moduleResolution": "node",
+    "skipLibCheck": true,
     "sourceMap": true,
     "outDir": "dist",
     "baseUrl": ".",
-    "lib": ["es2017"],
+    "lib": ["es2019"],
     "paths": {
       "web3": [
         "../../node_modules/@types/web3/index",
         "node_modules/web3/index"
       ]
     },
-    "rootDir": ".",
-    "typeRoots": [
-      "./typings",
-      "node_modules/@types",
-      "../../node_modules/@types/mocha",
-      "../../node_modules/@types/fs-extra",
-      "../../node_modules/@types/inquirer",
-      "../../node_modules/@types/request-promise-native",
-      "../../node_modules/@types/tmp"
-    ]
+    "rootDir": "."
   },
   "include": [
     "./**/*.ts",

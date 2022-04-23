@@ -55,12 +55,13 @@ function* fetchTransactionInfo(adapter, { txHash }) {
   trace = padStackAndMemory(trace); //for Besu compatibility
   yield put(actions.receiveTrace(trace));
 
-  let tx = yield apply(adapter, adapter.getTransaction, [txHash]);
+  const tx = yield apply(adapter, adapter.getTransaction, [txHash]);
   debug("tx %O", tx);
-  let receipt = yield apply(adapter, adapter.getReceipt, [txHash]);
+  const receipt = yield apply(adapter, adapter.getReceipt, [txHash]);
   debug("receipt %O", receipt);
-  let block = yield apply(adapter, adapter.getBlock, [tx.blockNumber]);
+  const block = yield apply(adapter, adapter.getBlock, [tx.blockNumber]);
   debug("block %O", block);
+  const chainId = yield apply(adapter, adapter.getChainId);
 
   yield put(session.saveTransaction(tx));
   yield put(session.saveReceipt(receipt));
@@ -72,7 +73,11 @@ function* fetchTransactionInfo(adapter, { txHash }) {
     difficulty: new BN(block.difficulty),
     gaslimit: new BN(block.gasLimit),
     number: new BN(block.number),
-    timestamp: new BN(block.timestamp)
+    timestamp: new BN(block.timestamp),
+    chainid: new BN(chainId), //key is lowercase because that's what Solidity does
+    basefee: new BN(parseInt(block.baseFeePerGas)) //will be 0 if pre-London [new BN(NaN) yields 0]
+    //note we need parseInt on basefee because some web3 versions return it as a hex string,
+    //and BN doesn't allow for hex strings as input
   };
 
   if (tx.to != null) {

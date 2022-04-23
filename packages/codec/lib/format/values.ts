@@ -1,3 +1,10 @@
+/**
+ * Contains the types for value and result objects.
+ * @category Main Format
+ *
+ * @packageDocumentation
+ */
+
 import debugModule from "debug";
 const debug = debugModule("codec:format:values");
 
@@ -10,30 +17,30 @@ const debug = debugModule("codec:format:values");
 //just intended for the future.  More optional fields may be added in the
 //future.
 
-import BN from "bn.js";
-import * as Types from "./types";
-import * as Errors from "./errors";
-import {
+import type * as Types from "./types";
+import type * as Errors from "./errors";
+import type {
   ElementaryValue,
   UintValue,
   IntValue,
   BoolValue,
   BytesStaticValue,
   BytesDynamicValue,
+  BytesValue,
   AddressValue,
   StringValue,
   FixedValue,
   UfixedValue,
   EnumValue,
+  UserDefinedValueTypeValue,
   ContractValue,
-  ContractValueInfo,
   ContractValueInfoKnown,
   ContractValueInfoUnknown
 } from "./elementary";
-import * as Common from "@truffle/codec/common";
-import * as AbiData from "@truffle/codec/abi-data/types";
+import type * as Common from "@truffle/codec/common";
+import type * as Abi from "@truffle/abi-utils";
 
-export * from "./elementary";
+export * from "./elementary"; //can't do 'export type *'
 
 /*
  * SECTION 1: Generic types for values in neneral (including errors).
@@ -53,7 +60,9 @@ export type Result =
   | MagicResult
   | TypeResult
   | FunctionExternalResult
-  | FunctionInternalResult;
+  | FunctionInternalResult
+  | OptionsResult;
+
 /**
  * An actual value, not an error (although if a container type it may contain errors!)
  *
@@ -68,7 +77,44 @@ export type Value =
   | MagicValue
   | TypeValue
   | FunctionExternalValue
-  | FunctionInternalValue;
+  | FunctionInternalValue
+  | OptionsValue;
+
+/**
+ * A value that can go in the ABI
+ *
+ * @Category General categories
+ */
+export type AbiValue =
+  | UintValue
+  | IntValue
+  | BoolValue
+  | BytesValue
+  | AddressValue
+  | FixedValue
+  | UfixedValue
+  | StringValue
+  | ArrayValue
+  | FunctionExternalValue
+  | TupleValue;
+
+/**
+ * A result for an ABI type
+ *
+ * @Category General categories
+ */
+export type AbiResult =
+  | UintResult
+  | IntResult
+  | BoolResult
+  | BytesResult
+  | AddressResult
+  | FixedResult
+  | UfixedResult
+  | StringResult
+  | ArrayResult
+  | FunctionExternalResult
+  | TupleResult;
 
 /*
  * SECTION 2: Built-in elementary types
@@ -93,6 +139,7 @@ export type ElementaryResult =
   | FixedResult
   | UfixedResult
   | EnumResult
+  | UserDefinedValueTypeResult
   | ContractResult;
 
 /**
@@ -179,6 +226,13 @@ export type UfixedResult = UfixedValue | Errors.UfixedErrorResult;
  * @Category User-defined elementary types
  */
 export type EnumResult = EnumValue | Errors.EnumErrorResult;
+
+/**
+ * A UDVT value or error
+ *
+ * @Category User-defined elementary types
+ */
+export type UserDefinedValueTypeResult = UserDefinedValueTypeValue | Errors.UserDefinedValueTypeErrorResult;
 
 /**
  * A contract value or error
@@ -412,7 +466,7 @@ export interface FunctionExternalValueInfoKnown {
    * formatted as a hex string
    */
   selector: string;
-  abi: AbiData.FunctionAbiEntry;
+  abi: Abi.FunctionEntry;
   //may have more optional fields added later, I'll leave these out for now
 }
 
@@ -538,4 +592,26 @@ export interface FunctionInternalValueInfoUnknown {
   context: Types.ContractType;
   deployedProgramCounter: number;
   constructorProgramCounter: number;
+}
+
+/*
+ * SECTION 7: Options
+ */
+
+/**
+ * An options value or error
+ *
+ * @Category Special types (encoder-only)
+ */
+export type OptionsResult = OptionsValue | Errors.OptionsErrorResult;
+
+/**
+ * An options value
+ *
+ * @Category Special types (encoder-only)
+ */
+export interface OptionsValue {
+  type: Types.OptionsType;
+  kind: "value";
+  value: Common.Options;
 }

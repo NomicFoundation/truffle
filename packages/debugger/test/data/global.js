@@ -1,19 +1,19 @@
 import debugModule from "debug";
-const debug = debugModule("test:data:global");
+const debug = debugModule("debugger:test:data:global");
 
 import { assert } from "chai";
 
-import Ganache from "ganache-core";
+import Ganache from "ganache";
 
 import { prepareContracts, lineOf } from "../helpers";
 import Debugger from "lib/debugger";
 
 import * as Codec from "@truffle/codec";
 
-import solidity from "lib/solidity/selectors";
+import sourcemapping from "lib/sourcemapping/selectors";
 
 const __GLOBAL = `
-pragma solidity ^0.7.0;
+pragma solidity ^0.8.0;
 
 contract GlobalTest {
 
@@ -21,13 +21,13 @@ contract GlobalTest {
 
   struct Msg {
     bytes data;
-    address payable sender;
+    address sender;
     bytes4 sig;
     uint value;
   }
 
   struct Tx {
-    address payable origin;
+    address origin;
     uint gasprice;
   }
 
@@ -37,6 +37,8 @@ contract GlobalTest {
     uint gaslimit;
     uint number;
     uint timestamp;
+    uint chainid;
+    uint basefee;
   }
 
   Msg _msg;
@@ -49,7 +51,8 @@ contract GlobalTest {
     _msg = Msg(msg.data, msg.sender, msg.sig, msg.value);
     _tx = Tx(tx.origin, tx.gasprice);
     _block = Block(block.coinbase, block.difficulty,
-      block.gaslimit, block.number, block.timestamp);
+      block.gaslimit, block.number, block.timestamp, block.chainid,
+      block.basefee);
     emit Done(x); //BREAK SIMPLE
   }
 
@@ -66,8 +69,9 @@ contract GlobalTest {
     __msg = Msg(msg.data, msg.sender, msg.sig, 0);
     __tx = Tx(tx.origin, tx.gasprice);
     __block = Block(block.coinbase, block.difficulty,
-      block.gaslimit, block.number, block.timestamp);
-    return x + uint(address(__this)) //BREAK STATIC
+      block.gaslimit, block.number, block.timestamp, block.chainid,
+      block.basefee);
+    return x + uint160(address(__this)) //BREAK STATIC
       + __msg.value + __tx.gasprice + __block.number;
   }
 
@@ -106,7 +110,8 @@ contract CreationTest {
     _msg = GlobalTest.Msg(msg.data, msg.sender, msg.sig, msg.value);
     _tx = GlobalTest.Tx(tx.origin, tx.gasprice);
     _block = GlobalTest.Block(block.coinbase, block.difficulty,
-      block.gaslimit, block.number, block.timestamp);
+      block.gaslimit, block.number, block.timestamp, block.chainid,
+      block.basefee);
     require(succeed); //BREAK CREATE
     emit Done(x);
   }
@@ -123,7 +128,7 @@ library GlobalTestLib {
     __msg = GlobalTest.Msg(msg.data, msg.sender, msg.sig, msg.value);
     __tx = GlobalTest.Tx(tx.origin, tx.gasprice);
     __block = GlobalTest.Block(block.coinbase, block.difficulty,
-      block.gaslimit, block.number, block.timestamp);
+      block.gaslimit, block.number, block.timestamp, block.chainid, block.basefee);
     emit Done(x + __msg.value + __tx.gasprice + __block.number); //BREAK LIBRARY
   }
 }
@@ -156,7 +161,16 @@ describe("Globally-available variables", function () {
   var compilations;
 
   before("Create Provider", async function () {
-    provider = Ganache.provider({ seed: "debugger", gasLimit: 7000000 });
+    provider = Ganache.provider({
+      seed: "debugger",
+      gasLimit: 7000000,
+      logging: {
+        quiet: true
+      },
+      miner: {
+        instamine: "strict"
+      }
+    });
   });
 
   before("Prepare contracts and artifacts", async function () {
@@ -175,9 +189,9 @@ describe("Globally-available variables", function () {
 
     let bugger = await Debugger.forTx(txHash, { provider, compilations });
 
-    await bugger.continueUntilBreakpoint(); //run till end
+    await bugger.runToEnd();
 
-    const variables = Codec.Format.Utils.Inspect.nativizeVariables(
+    const variables = Codec.Format.Utils.Inspect.unsafeNativizeVariables(
       await bugger.variables()
     );
 
@@ -195,17 +209,15 @@ describe("Globally-available variables", function () {
 
     let bugger = await Debugger.forTx(txHash, { provider, compilations });
 
-    let sourceId = bugger.view(solidity.current.source).id;
-    let compilationId = bugger.view(solidity.current.source).compilationId;
-    let source = bugger.view(solidity.current.source).source;
+    let sourceId = bugger.view(sourcemapping.current.source).id;
+    let source = bugger.view(sourcemapping.current.source).source;
     await bugger.addBreakpoint({
       sourceId,
-      compilationId,
       line: lineOf("BREAK SIMPLE", source)
     });
     await bugger.continueUntilBreakpoint();
 
-    const variables = Codec.Format.Utils.Inspect.nativizeVariables(
+    const variables = Codec.Format.Utils.Inspect.unsafeNativizeVariables(
       await bugger.variables()
     );
 
@@ -223,17 +235,15 @@ describe("Globally-available variables", function () {
 
     let bugger = await Debugger.forTx(txHash, { provider, compilations });
 
-    let sourceId = bugger.view(solidity.current.source).id;
-    let compilationId = bugger.view(solidity.current.source).compilationId;
-    let source = bugger.view(solidity.current.source).source;
+    let sourceId = bugger.view(sourcemapping.current.source).id;
+    let source = bugger.view(sourcemapping.current.source).source;
     await bugger.addBreakpoint({
       sourceId,
-      compilationId,
       line: lineOf("BREAK STATIC", source)
     });
     await bugger.continueUntilBreakpoint();
 
-    const variables = Codec.Format.Utils.Inspect.nativizeVariables(
+    const variables = Codec.Format.Utils.Inspect.unsafeNativizeVariables(
       await bugger.variables()
     );
 
@@ -251,17 +261,17 @@ describe("Globally-available variables", function () {
 
     let bugger = await Debugger.forTx(txHash, { provider, compilations });
 
-    let sourceId = bugger.view(solidity.current.source).id;
-    let compilationId = bugger.view(solidity.current.source).compilationId;
-    let source = bugger.view(solidity.current.source).source;
+    let sourceId = bugger.view(sourcemapping.current.source).id;
+    let source = bugger.view(sourcemapping.current.source).source;
     await bugger.addBreakpoint({
       sourceId,
-      compilationId,
       line: lineOf("BREAK LIBRARY", source)
     });
     await bugger.continueUntilBreakpoint();
 
-    const variables = Codec.Format.Utils.Inspect.nativizeVariables(
+    debug("variables: %O", await bugger.variables());
+
+    const variables = Codec.Format.Utils.Inspect.unsafeNativizeVariables(
       await bugger.variables()
     );
 
@@ -277,9 +287,9 @@ describe("Globally-available variables", function () {
 
     let bugger = await Debugger.forTx(txHash, { provider, compilations });
 
-    await bugger.continueUntilBreakpoint(); //run till end
+    await bugger.runToEnd();
 
-    const variables = Codec.Format.Utils.Inspect.nativizeVariables(
+    const variables = Codec.Format.Utils.Inspect.unsafeNativizeVariables(
       await bugger.variables()
     );
 
@@ -297,17 +307,15 @@ describe("Globally-available variables", function () {
 
     let bugger = await Debugger.forTx(txHash, { provider, compilations });
 
-    let sourceId = bugger.view(solidity.current.source).id;
-    let compilationId = bugger.view(solidity.current.source).compilationId;
-    let source = bugger.view(solidity.current.source).source;
+    let sourceId = bugger.view(sourcemapping.current.source).id;
+    let source = bugger.view(sourcemapping.current.source).source;
     await bugger.addBreakpoint({
       sourceId,
-      compilationId,
       line: lineOf("BREAK CREATE", source)
     });
     await bugger.continueUntilBreakpoint();
 
-    const variables = Codec.Format.Utils.Inspect.nativizeVariables(
+    const variables = Codec.Format.Utils.Inspect.unsafeNativizeVariables(
       await bugger.variables()
     );
 
@@ -325,17 +333,15 @@ describe("Globally-available variables", function () {
 
     let bugger = await Debugger.forTx(txHash, { provider, compilations });
 
-    let sourceId = bugger.view(solidity.current.source).id;
-    let compilationId = bugger.view(solidity.current.source).compilationId;
-    let source = bugger.view(solidity.current.source).source;
+    let sourceId = bugger.view(sourcemapping.current.source).id;
+    let source = bugger.view(sourcemapping.current.source).source;
     await bugger.addBreakpoint({
       sourceId,
-      compilationId,
       line: lineOf("BREAK CREATE", source)
     });
     await bugger.continueUntilBreakpoint();
 
-    const variables = Codec.Format.Utils.Inspect.nativizeVariables(
+    const variables = Codec.Format.Utils.Inspect.unsafeNativizeVariables(
       await bugger.variables()
     );
 

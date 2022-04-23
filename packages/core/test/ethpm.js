@@ -1,12 +1,12 @@
 const assert = require("chai").assert;
-const Box = require("@truffle/box");
+const { default: Box } = require("@truffle/box");
 const fs = require("fs-extra");
 const glob = require("glob");
 const path = require("path");
 const WorkflowCompile = require("@truffle/workflow-compile");
 const Package = require("../lib/package.js");
 const Blockchain = require("@truffle/blockchain-utils");
-const Ganache = require("ganache-core");
+const Ganache = require("ganache");
 const Resolver = require("@truffle/resolver");
 const Artifactor = require("@truffle/artifactor");
 
@@ -32,7 +32,14 @@ describe.skip("EthPM integration", function () {
   beforeEach("Create a Ganache provider and get a blockchain uri", function (
     done
   ) {
-    provider = Ganache.provider();
+    provider = Ganache.provider({
+      miner: {
+        instamine: "strict"
+      },
+      logging: {
+        quiet: true
+      }
+    });
 
     Blockchain.asURI(provider, function (err, uri) {
       if (err) return done(err);
@@ -116,12 +123,12 @@ describe.skip("EthPM integration", function () {
         packages: ["owned"]
       })
     );
-    const expected_install_directory = path.resolve(
+    const expectedInstallDirectory = path.resolve(
       path.join(config.working_directory, "installed_contracts", "owned")
     );
 
-    assertFile(path.join(expected_install_directory, "ethpm.json"));
-    assertFile(path.join(expected_install_directory, "contracts", "owned.sol"));
+    assertFile(path.join(expectedInstallDirectory, "ethpm.json"));
+    assertFile(path.join(expectedInstallDirectory, "contracts", "owned.sol"));
   });
 
   it("successfully installs and provisions a package with dependencies from EthPM", async function () {
@@ -138,24 +145,24 @@ describe.skip("EthPM integration", function () {
         packages: ["transferable"]
       })
     );
-    const expected_install_directory = path.resolve(
+    const expectedInstallDirectory = path.resolve(
       path.join(config.working_directory, "installed_contracts")
     );
 
     assertFile(
-      path.join(expected_install_directory, "transferable", "ethpm.json")
+      path.join(expectedInstallDirectory, "transferable", "ethpm.json")
     );
     assertFile(
       path.join(
-        expected_install_directory,
+        expectedInstallDirectory,
         "transferable",
         "contracts",
         "transferable.sol"
       )
     );
-    assertFile(path.join(expected_install_directory, "owned", "ethpm.json"));
+    assertFile(path.join(expectedInstallDirectory, "owned", "ethpm.json"));
     assertFile(
-      path.join(expected_install_directory, "owned", "contracts", "owned.sol")
+      path.join(expectedInstallDirectory, "owned", "contracts", "owned.sol")
     );
 
     // Write a contract that uses transferable, so it will be compiled.

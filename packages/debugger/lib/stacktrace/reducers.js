@@ -10,11 +10,12 @@ function callstack(state = [], action) {
   let newFrame;
   switch (action.type) {
     case actions.JUMP_IN:
-      let { location, functionNode, contractNode } = action;
+      const { location, functionNode, contractNode, sourceIsInternal } = action;
       newFrame = {
         type: "internal",
         calledFromLocation: location,
         address: state[state.length - 1].address,
+        isConstructor: state[state.length - 1].isConstructor,
         functionName:
           functionNode &&
           (functionNode.nodeType === "FunctionDefinition" ||
@@ -25,6 +26,8 @@ function callstack(state = [], action) {
           contractNode && contractNode.nodeType === "ContractDefinition"
             ? contractNode.name
             : undefined,
+        combineWithNextInternal: false,
+        sourceIsInternal
         //note we don't currently account for getters because currently
         //we can't; fallback, receive, constructors, & modifiers also remain
         //unaccounted for at present
@@ -45,13 +48,16 @@ function callstack(state = [], action) {
         calledFromLocation: action.location,
         functionName: undefined,
         contractName: action.context.contractName,
+        isConstructor: action.context.isConstructor,
+        combineWithNextInternal: action.combineWithNextInternal
+        //sourceIsInternal doesn't really apply here, so let's just omit it
       };
       return [...state, newFrame];
     case actions.EXECUTE_RETURN:
       return popNWhere(
         state,
         action.counter,
-        (frame) => frame.type === "external"
+        frame => frame.type === "external"
       );
     case actions.RESET:
       return [state[0]];
@@ -81,13 +87,18 @@ function lastPosition(state = null, action) {
   switch (action.type) {
     case actions.JUMP_IN:
     case actions.JUMP_OUT:
-    case actions.ETERNAL_CALL:
+    case actions.EXTERNAL_CALL:
     case actions.EXTERNAL_RETURN:
     case actions.UPDATE_POSITION:
     case actions.EXECUTE_RETURN:
       const { location } = action;
-      if (location.source.id === undefined) {
-        //don't update for unmapped!
+      if (
+        location === null ||
+        location.source.id === undefined ||
+        location.source.internal
+      ) {
+        //don't update for unmapped or internal!
+        //also don't update for null location
         return state;
       }
       return location;
@@ -129,16 +140,30 @@ function innerReturnStatus(state = null, action) {
   }
 }
 
+function innerErrorIndex(state = null, action) {
+  switch (action.type) {
+    case actions.EXTERNAL_RETURN:
+      //we use index null to mean don't update
+      return action.index !== null ? action.index : state;
+    case actions.RESET:
+    case actions.UNLOAD_TRANSACTION:
+      return null;
+    default:
+      return state;
+  }
+}
+
 const proc = combineReducers({
   callstack,
   returnCounter,
   lastPosition,
   innerReturnPosition,
   innerReturnStatus,
+  innerErrorIndex
 });
 
 const reducer = combineReducers({
-  proc,
+  proc
 });
 
 export default reducer;

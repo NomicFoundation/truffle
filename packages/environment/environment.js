@@ -4,12 +4,12 @@ const expect = require("@truffle/expect");
 const TruffleError = require("@truffle/error");
 const Resolver = require("@truffle/resolver");
 const Artifactor = require("@truffle/artifactor");
-const Ganache = require("ganache-core/public-exports");
+const Ganache = require("ganache");
 const Provider = require("@truffle/provider");
 
 const Environment = {
   // It's important config is a Config object and not a vanilla object
-  detect: async function(config) {
+  detect: async function (config) {
     expect.options(config, ["networks"]);
 
     helpers.setUpConfig(config);
@@ -17,7 +17,7 @@ const Environment = {
 
     const interfaceAdapter = createInterfaceAdapter({
       provider: config.provider,
-      networkType: config.networks[config.network].type
+      networkType: config.network_config.type
     });
 
     await Provider.testConnection(config);
@@ -26,21 +26,29 @@ const Environment = {
   },
 
   // Ensure you call Environment.detect() first.
-  fork: async function(config) {
+  fork: async function (config, ganacheOptions) {
     expect.options(config, ["from", "provider", "networks", "network"]);
 
     const interfaceAdapter = createInterfaceAdapter({
       provider: config.provider,
-      networkType: config.networks[config.network].type
+      networkType: config.network_config.type
     });
 
-    const accounts = await interfaceAdapter.getAccounts();
+    let accounts;
+    try {
+      accounts = await interfaceAdapter.getAccounts();
+    } catch {
+      // don't prevent Truffle from working if user doesn't provide some way
+      // to sign transactions (e.g. no reason to disallow debugging)
+      accounts = [];
+    }
     const block = await interfaceAdapter.getBlock("latest");
 
     const upstreamNetwork = config.network;
     const upstreamConfig = config.networks[upstreamNetwork];
     const forkedNetwork = config.network + "-fork";
-    const ganacheOptions = {
+    ganacheOptions = {
+      ...ganacheOptions,
       fork: config.provider,
       gasLimit: block.gasLimit
     };
@@ -63,8 +71,9 @@ const Environment = {
     const url = `http://${ganacheOptions.host}:${ganacheOptions.port}/`;
 
     config.networks[network] = {
+      ...config.networks[network],
       network_id: ganacheOptions.network_id,
-      provider: function() {
+      provider: function () {
         return new Web3.providers.HttpProvider(url, { keepAlive: false });
       }
     };
@@ -79,8 +88,13 @@ const helpers = {
   setFromOnConfig: async (config, interfaceAdapter) => {
     if (config.from) return;
 
-    const accounts = await interfaceAdapter.getAccounts();
-    config.networks[config.network].from = accounts[0];
+    try {
+      const accounts = await interfaceAdapter.getAccounts();
+      config.networks[config.network].from = accounts[0];
+    } catch {
+      // don't prevent Truffle from working if user doesn't provide some way
+      // to sign transactions (e.g. no reason to disallow debugging)
+    }
   },
 
   detectAndSetNetworkId: async (config, interfaceAdapter) => {
@@ -104,7 +118,7 @@ const helpers = {
   },
 
   validateNetworkConfig: config => {
-    const networkConfig = config.networks[config.network];
+    const networkConfig = config.network_config;
 
     if (!networkConfig) {
       throw new TruffleError(
@@ -113,7 +127,7 @@ const helpers = {
       );
     }
 
-    const configNetworkId = config.networks[config.network].network_id;
+    const configNetworkId = config.network_config.network_id;
 
     if (configNetworkId == null) {
       throw new Error(

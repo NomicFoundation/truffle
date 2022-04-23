@@ -1,5 +1,5 @@
 import debugModule from "debug";
-const debug = debugModule("test:helpers");
+const debug = debugModule("debugger:test:helpers");
 
 import path from "path";
 import fs from "fs-extra";
@@ -14,7 +14,7 @@ import * as Codec from "@truffle/codec";
 export async function prepareContracts(provider, sources = {}, migrations) {
   let config = await createSandbox();
 
-  let accounts = await getAccounts(provider);
+  const accounts = await new Web3(provider).eth.getAccounts();
 
   config.networks["debugger"] = {
     provider: provider,
@@ -25,16 +25,21 @@ export async function prepareContracts(provider, sources = {}, migrations) {
 
   config.compilers = {
     solc: {
-      version: "0.7.1",
+      version: "0.8.12",
       settings: {
         optimizer: { enabled: false, runs: 200 },
-        evmVersion: "constantinople"
+        evmVersion: "london"
+      }
+    },
+    vyper: {
+      settings: {
+        evmVersion: "berlin"
       }
     }
   };
 
   await addContracts(config, sources);
-  let { contractNames, files } = await compile(config);
+  let { contractNames, compilations: rawCompilations } = await compile(config);
 
   if (!migrations) {
     migrations = await defaultMigrations(contractNames);
@@ -43,35 +48,18 @@ export async function prepareContracts(provider, sources = {}, migrations) {
   await addMigrations(config, migrations);
   await migrate(config);
 
-  let artifacts = await gatherArtifacts(config);
-  debug(
-    "artifacts: %o",
-    artifacts.map(a => a.contractName)
-  );
-
   let abstractions = {};
   for (let name of contractNames) {
     abstractions[name] = config.resolver.require(name);
   }
 
-  let compilations = Codec.Compilations.Utils.shimArtifacts(artifacts, files);
+  let compilations = Codec.Compilations.Utils.shimCompilations(rawCompilations);
 
   return {
-    files,
     abstractions,
     compilations,
     config
   };
-}
-
-export function getAccounts(provider) {
-  let web3 = new Web3(provider);
-  return new Promise(function (accept, reject) {
-    web3.eth.getAccounts(function (err, accounts) {
-      if (err) return reject(err);
-      accept(accounts);
-    });
-  });
 }
 
 export async function createSandbox() {
@@ -140,32 +128,10 @@ export async function compile(config) {
       quiet: true
     })
   );
-  const collectedCompilationOutput = compilations.reduce(
-    (a, compilation) => {
-      if (compilation.compiler.name === "solc") {
-        for (const contract of compilation.contracts) {
-          a.contractNames = a.contractNames.concat(contract.contractName);
-        }
-        a.sourceIndexes = a.sourceIndexes.concat(compilation.sourceIndexes);
-      }
-      return a;
-    },
-    { contractNames: [], sourceIndexes: [] }
+  const contractNames = compilations.flatMap(compilation =>
+    compilation.contracts.map(contract => contract.contractName)
   );
-  const sourceIndexes = collectedCompilationOutput.sourceIndexes.filter(
-    (item, index) => {
-      return collectedCompilationOutput.sourceIndexes.indexOf(item) === index;
-    }
-  );
-  const contractNames = collectedCompilationOutput.contractNames.filter(
-    (item, index) => {
-      return collectedCompilationOutput.contractNames.indexOf(item) === index;
-    }
-  );
-  return {
-    contractNames,
-    files: sourceIndexes
-  };
+  return { compilations, contractNames };
 }
 
 export async function migrate(config) {
@@ -180,26 +146,6 @@ export async function migrate(config) {
       }
     );
   });
-}
-
-export async function gatherArtifacts(config) {
-  // Gather all available contract artifacts
-  const files = fs.readdirSync(config.contracts_build_directory);
-
-  let contracts = files
-    .filter(filePath => {
-      return path.extname(filePath) === ".json";
-    })
-    .map(filePath => {
-      return path.basename(filePath, ".json");
-    })
-    .map(contractName => {
-      return config.resolver.require(contractName);
-    });
-
-  await Promise.all(contracts.map(abstraction => abstraction.detectNetwork()));
-
-  return contracts;
 }
 
 export function lineOf(searchString, source) {

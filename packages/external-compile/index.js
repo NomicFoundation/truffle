@@ -9,7 +9,8 @@ const fs = require("fs");
 const expect = require("@truffle/expect");
 const Schema = require("@truffle/contract-schema");
 const web3Utils = require("web3-utils");
-const { Shims } = require("@truffle/compile-common");
+const { Shims, Compilations } = require("@truffle/compile-common");
+const Config = require("@truffle/config");
 
 const DEFAULT_ABI = [
   {
@@ -259,9 +260,10 @@ const Compile = {
     });
   },
 
-  // the `sources` argument here is currently unused as the user is
-  // responsible for dealing with compiling their sources
-  async sources({ sources, options }) {
+  // compile-common defines object argument to include `sources`, but this is
+  // unused as the user is responsible for dealing with compiling their sources
+  async sources({ options }) {
+    options = Config.default().merge(options);
     if (options.logger == null) {
       options.logger = console;
     }
@@ -281,20 +283,26 @@ const Compile = {
     await runCommand(command, { cwd, logger });
 
     const contracts = await processTargets(targets, cwd, logger);
-    return {
-      compilations: [
-        {
-          contracts: contracts.map(Shims.LegacyToNew.forContract),
-          // sourceIndexes is empty because we have no way of
-          // knowing for certain the source paths for the contracts
-          sourceIndexes: [],
-          compiler: {
-            name: "external",
-            version: undefined
-          }
+    const compilations = [
+      {
+        contracts: contracts.map(Shims.LegacyToNew.forContract),
+        // sourceIndexes is empty because we have no way of
+        // knowing for certain the source paths for the contracts
+        sourceIndexes: [],
+        // since we don't know the sourcePaths, we can't really provide
+        // the source info reliably
+        sources: [],
+        compiler: {
+          name: "external",
+          version: undefined
         }
-      ]
-    };
+      }
+    ];
+    return Compilations.promoteCompileResult({ compilations });
+  },
+
+  async sourcesWithDependencies({ options }) {
+    return await Compile.sources({ options });
   }
 };
 

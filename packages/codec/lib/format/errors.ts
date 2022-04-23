@@ -1,3 +1,9 @@
+/**
+ * Contains the types for error and `ErrorResult` objects.
+ * @category Main Format
+ *
+ * @packageDocumentation
+ */
 import debugModule from "debug";
 const debug = debugModule("codec:format:errors");
 
@@ -7,11 +13,11 @@ const debug = debugModule("codec:format:errors");
 //This is because they're not for throwing.  If you want to throw one,
 //wrap it in a DecodingError.
 
-import BN from "bn.js";
-import * as Types from "./types";
-import * as Ast from "@truffle/codec/ast/types";
-import * as Storage from "@truffle/codec/storage/types";
-import { PaddingType } from "@truffle/codec/types";
+import type BN from "bn.js";
+import type * as Types from "./types";
+import type * as Ast from "@truffle/codec/ast/types";
+import type * as Storage from "@truffle/codec/storage/types";
+import type { PaddingType } from "@truffle/codec/common";
 
 /*
  * SECTION 1: Generic types for values in general (including errors).
@@ -31,7 +37,26 @@ export type ErrorResult =
   | TypeErrorResult
   | TupleErrorResult
   | FunctionExternalErrorResult
-  | FunctionInternalErrorResult;
+  | FunctionInternalErrorResult
+  | OptionsErrorResult;
+
+/**
+ * An error result for an ABI type
+ *
+ * @Category General categories
+ */
+export type AbiErrorResult =
+  | UintErrorResult
+  | IntErrorResult
+  | BoolErrorResult
+  | BytesErrorResult
+  | AddressErrorResult
+  | FixedErrorResult
+  | UfixedErrorResult
+  | StringErrorResult
+  | ArrayErrorResult
+  | FunctionExternalErrorResult
+  | TupleErrorResult;
 
 /**
  * One of the underlying errors contained in an [[ErrorResult]]
@@ -56,6 +81,7 @@ export type DecoderError =
   | TypeErrorUnion
   | TupleError
   | EnumError
+  | UserDefinedValueTypeError
   | ContractError
   | FunctionExternalError
   | FunctionInternalError
@@ -80,7 +106,22 @@ export type ElementaryErrorResult =
   | FixedErrorResult
   | UfixedErrorResult
   | EnumErrorResult
+  | UserDefinedValueTypeErrorResult
   | ContractErrorResult;
+
+/**
+ * An error result for a built-in value type
+ *
+ * @Category Elementary types
+ */
+export type BuiltInValueErrorResult =
+  | UintErrorResult
+  | IntErrorResult
+  | BoolErrorResult
+  | BytesStaticErrorResult
+  | AddressErrorResult
+  | FixedErrorResult
+  | UfixedErrorResult;
 
 /**
  * An error result for a bytestring
@@ -421,6 +462,35 @@ export interface EnumNotFoundDecodingError {
 }
 
 /**
+ * An error result for a user-defined value type
+ *
+ * @Category User-defined elementary types
+ */
+export interface UserDefinedValueTypeErrorResult {
+  type: Types.UserDefinedValueTypeType;
+  kind: "error";
+  error: GenericError | UserDefinedValueTypeError;
+}
+
+/**
+ * A UDVT-specific error
+ *
+ * @Category User-defined elementary types
+ */
+export type UserDefinedValueTypeError = WrappedError;
+
+/**
+ * An error result representing something going wrong decoding
+ * the underlying type when decoding a UDVT
+ *
+ * @Category User-defined elementary types
+ */
+export interface WrappedError {
+  kind: "WrappedError";
+  error: BuiltInValueErrorResult;
+}
+
+/**
  * An error result for a contract
  *
  * @Category User-defined elementary types
@@ -701,7 +771,27 @@ export interface MalformedInternalFunctionError {
 }
 
 /*
- * SECTION 7: Generic errors
+ * SECTION 7: Options
+ */
+
+/**
+ * An options error.  This should never happen,
+ * as options are never decoded, but it's included for
+ * completeness.
+ */
+export interface OptionsErrorResult {
+  type: Types.OptionsType;
+  kind: "error";
+  error: GenericError | OptionsError;
+}
+
+/**
+ * The options type has no type-specific errors at the moment
+ */
+export type OptionsError = never;
+
+/*
+ * SECTION 8: Generic errors
  */
 
 /**
@@ -713,6 +803,7 @@ export type GenericError =
   | UserDefinedTypeNotFoundError
   | IndexedReferenceTypeError
   | ReadError;
+
 /**
  * A read error
  *
@@ -723,7 +814,9 @@ export type ReadError =
   | ReadErrorStack
   | ReadErrorBytes
   | ReadErrorStorage
+  | StorageNotSuppliedError
   | UnusedImmutableError;
+
 /**
  * An error resulting from overlarge length or pointer values
  *
@@ -820,6 +913,19 @@ export interface ReadErrorStorage {
 }
 
 /**
+ * A read error in storage, but one triggered deliberately to indicate
+ * that that particular area of storage is unknown, rather than due to
+ * an unexpected error condition.  This error is triggered by passing
+ * null in response to a storage request.
+ *
+ * @Category Generic errors
+ */
+export interface StorageNotSuppliedError {
+  kind: "StorageNotSuppliedError";
+  range: Storage.Range;
+}
+
+/**
  * Attempting to read an immutable that is never stored anywhere
  *
  * @Category Generic errors
@@ -849,7 +955,7 @@ export interface OverlargePointersNotImplementedError {
   pointerAsBN: BN;
 }
 
-/* SECTION 8: Internal use errors */
+/* SECTION 9: Internal use errors */
 /* you should never see these returned.
  * they are only for internal use. */
 

@@ -9,14 +9,11 @@
     "sourceMap": true,
     "outDir": "dist",
     "baseUrl": ".",
-    "lib": ["es2017"],
+    "lib": ["es2019"],
     "paths": {
     },
     "rootDir": ".",
-    "types": ["mocha"],
-    "typeRoots": [
-      "../../node_modules/@types/fs-extra"
-    ]
+    "types": ["node", "mocha"]
   },
   "include": [
     "./src/**/*.ts"

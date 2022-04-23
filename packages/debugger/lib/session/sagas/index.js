@@ -7,11 +7,12 @@ import { prefixName } from "lib/helpers";
 
 import * as ast from "lib/ast/sagas";
 import * as controller from "lib/controller/sagas";
-import * as solidity from "lib/solidity/sagas";
+import * as sourcemapping from "lib/sourcemapping/sagas";
 import * as stacktrace from "lib/stacktrace/sagas";
 import * as evm from "lib/evm/sagas";
 import * as trace from "lib/trace/sagas";
 import * as data from "lib/data/sagas";
+import * as txlog from "lib/txlog/sagas";
 import * as web3 from "lib/web3/sagas";
 
 import * as actions from "../actions";
@@ -107,8 +108,11 @@ function* startFullMode() {
     //better not start this twice!
     return;
   }
-  debug("turning on data listener");
-  yield fork(data.saga);
+  debug("turning on data & txlog listeners");
+  const listenersToActivate = [data.saga, txlog.saga];
+  for (let listener of listenersToActivate) {
+    yield fork(listener);
+  }
 
   debug("visiting ASTs");
   // visit asts
@@ -118,7 +122,10 @@ function* startFullMode() {
   debug("saving allocation table");
   yield* data.recordAllocations();
 
-  yield* trace.addSubmoduleToCount();
+  yield* trace.addSubmoduleToCount(listenersToActivate.length);
+
+  //begin any full-mode modules that need beginning
+  yield* txlog.begin();
 
   yield put(actions.setFullMode());
 }
@@ -138,11 +145,12 @@ export default prefixName("session", saga);
 function* forkListeners(moduleOptions) {
   yield fork(listenerSaga); //session listener; this one is separate, sorry
   //(I didn't want to mess w/ the existing structure of defaults)
-  let mainApps = [evm, solidity, stacktrace];
+  let mainApps = [evm, sourcemapping, stacktrace];
   if (!moduleOptions.lightMode) {
     mainApps.push(data);
+    mainApps.push(txlog);
   }
-  let otherApps = [trace, controller, web3];
+  let otherApps = [controller, web3];
   const submoduleCount = mainApps.length;
   const apps = mainApps.concat(otherApps);
   yield* trace.setSubmoduleCount(submoduleCount);
@@ -192,9 +200,13 @@ function* fetchTx(txHash) {
   );
 
   debug("sending initial call");
-  yield* evm.begin(result); //note: this must occur *before* the other two
-  yield* solidity.begin();
+  yield* evm.begin(result); //note: this must occur *before* the other ones!
+  yield* sourcemapping.begin();
   yield* stacktrace.begin();
+  if (!(yield select(session.status.lightMode))) {
+    //full-mode-only modules
+    yield* txlog.begin();
+  }
 }
 
 function* recordContexts(contexts) {
@@ -204,7 +216,7 @@ function* recordContexts(contexts) {
 }
 
 function* recordSources(sources) {
-  yield* solidity.addSources(sources);
+  yield* sourcemapping.addSources(sources);
 }
 
 //creationBinary can be omitted; should only be used for creations
@@ -233,10 +245,11 @@ function* error(err) {
 export function* unload() {
   debug("unloading");
   yield* data.reset();
-  yield* solidity.unload();
+  yield* sourcemapping.unload();
   yield* evm.unload();
   yield* trace.unload();
   yield* stacktrace.unload();
+  yield* txlog.unload();
   yield put(actions.unloadTransaction());
 }
 

@@ -10,6 +10,16 @@ class ProviderError extends TruffleError {
       message = buildMessage(options);
     }
     super(message);
+
+    // important fields from RPC error responses, should be retained
+    // see: https://www.jsonrpc.org/specification#error_object
+    if (options && options.underlyingError && options.underlyingError.code !== undefined) {
+      this.code = options.underlyingError.code;
+    }
+
+    if (options && options.underlyingError && options.underlyingError.data) {
+      this.data = options.underlyingError.data;
+    }
   }
 }
 
@@ -29,7 +39,7 @@ const buildMessage = options => {
   message +=
     "Please check that your Ethereum client:\n" +
     "    - is running\n" +
-    '    - is accepting RPC connections (i.e., "--rpc" option is used in geth)\n' +
+    '    - is accepting RPC connections (i.e., "--rpc" or "--http" option is used in geth)\n' +
     "    - is accessible over the network\n" +
     "    - is properly configured in your Truffle configuration file (truffle-config.js)\n";
   return message;

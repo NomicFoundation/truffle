@@ -5,7 +5,8 @@ import { createSelectorTree, createLeaf } from "reselect-tree";
 import { isSkippedNodeType } from "lib/helpers";
 
 import evm from "lib/evm/selectors";
-import solidity from "lib/solidity/selectors";
+import sourcemapping from "lib/sourcemapping/selectors";
+import data from "lib/data/selectors";
 import trace from "lib/trace/selectors";
 
 /**
@@ -53,7 +54,7 @@ const controller = createSelectorTree({
     /**
      * controller.current.functionDepth
      */
-    functionDepth: createLeaf([solidity.current.functionDepth], identity),
+    functionDepth: createLeaf([sourcemapping.current.functionDepth], identity),
 
     /**
      * controller.current.executionContext
@@ -73,7 +74,7 @@ const controller = createSelectorTree({
        * controller.current.location.sourceRange
        */
       sourceRange: createLeaf(
-        [solidity.current.sourceRange, "/current/trace/loaded"],
+        [sourcemapping.current.sourceRange, "/current/trace/loaded"],
         (range, loaded) => (loaded ? range : null)
       ),
 
@@ -81,7 +82,7 @@ const controller = createSelectorTree({
        * controller.current.location.source
        */
       source: createLeaf(
-        [solidity.current.source, "/current/trace/loaded"],
+        [sourcemapping.current.source, "/current/trace/loaded"],
         (source, loaded) => (loaded ? source : null)
       ),
 
@@ -89,15 +90,20 @@ const controller = createSelectorTree({
        * controller.current.location.node
        */
       node: createLeaf(
-        [solidity.current.node, "/current/trace/loaded"],
+        [sourcemapping.current.node, "/current/trace/loaded"],
         (node, loaded) => (loaded ? node : null)
       ),
+
+      /**
+       * controller.current.location.astRef
+       */
+      astRef: createLeaf([data.current.astRef], identity),
 
       /**
        * controller.current.location.isMultiline
        */
       isMultiline: createLeaf(
-        [solidity.current.isMultiline, "/current/trace/loaded"],
+        [sourcemapping.current.isMultiline, "/current/trace/loaded"],
         (raw, loaded) => (loaded ? raw : false)
       )
     },
@@ -136,19 +142,24 @@ const controller = createSelectorTree({
      * returns null instead.
      */
     resolver: createLeaf(
-      [solidity.info.sources, solidity.views.findOverlappingRange],
+      [sourcemapping.views.sources, sourcemapping.views.overlapFunctions],
       (sources, functions) => breakpoint => {
         let adjustedBreakpoint;
         if (breakpoint.node === undefined) {
           let line = breakpoint.line;
+          if (line < 0) {
+            line = 0; //prevents hang if user enters large negative number
+          }
+          const { sourceId } = breakpoint;
           debug("breakpoint: %O", breakpoint);
           debug("sources: %o", sources);
-          let { source, ast } = sources[breakpoint.compilationId].byId[
-            breakpoint.sourceId
-          ];
-          let findOverlappingRange =
-            functions[breakpoint.compilationId][breakpoint.sourceId];
-          let lineLengths = source.split("\n").map(line => line.length);
+          const { source, ast } = sources[sourceId];
+          if (!ast) {
+            //if no ast, don't attempt to adjust
+            return breakpoint;
+          }
+          const findOverlappingRange = functions[sourceId];
+          const lineLengths = source.split("\n").map(line => line.length);
           //why does neither JS nor lodash have a scan function like Haskell??
           //guess we'll have to do our scan manually
           let lineStarts = [0];
@@ -195,7 +206,15 @@ const controller = createSelectorTree({
   /**
    * controller.isStepping
    */
-  isStepping: createLeaf(["./state"], state => state.isStepping)
+  isStepping: createLeaf(["./state"], state => state.isStepping),
+
+  /**
+   * controller.stepIntoInternalSources
+   */
+  stepIntoInternalSources: createLeaf(
+    ["./state"],
+    state => state.stepIntoInternalSources
+  )
 });
 
 export default controller;

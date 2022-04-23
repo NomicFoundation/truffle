@@ -2,6 +2,7 @@ const debugModule = require("debug");
 const debug = debugModule("lib:debug:printer");
 
 const path = require("path");
+const util = require("util");
 
 const DebugUtils = require("@truffle/debug-utils");
 const Codec = require("@truffle/codec");
@@ -9,15 +10,8 @@ const colors = require("colors");
 const Interpreter = require("js-interpreter");
 
 const selectors = require("@truffle/debugger").selectors;
-const {
-  session,
-  solidity,
-  trace,
-  controller,
-  data,
-  evm,
-  stacktrace
-} = selectors;
+const { session, sourcemapping, trace, controller, data, evm, stacktrace } =
+  selectors;
 
 class DebugPrinter {
   constructor(config, session) {
@@ -42,23 +36,48 @@ class DebugPrinter {
       return result;
     };
 
-    this.colorizedSources = {};
-    for (const [compilationId, compilation] of Object.entries(
-      this.session.view(solidity.info.sources)
-    )) {
-      this.colorizedSources[compilationId] = {};
-      for (const source of compilation.byId) {
-        const { id, source: raw, internal: yul } = source;
-        //for now, we assume internal sources are Yul and
-        //user sources are Solidity
-        const detabbed = DebugUtils.tabsToSpaces(raw);
-        const colorized = DebugUtils.colorize(detabbed, yul);
-        this.colorizedSources[compilationId][id] = colorized;
-      }
-    }
+    const colorizeSourceObject = source => {
+      const { source: raw, language } = source;
+      const detabbed = DebugUtils.tabsToSpaces(raw);
+      return DebugUtils.colorize(detabbed, language);
+    };
 
-    this.printouts = new Set(["sta"]);
+    this.colorizedSources = Object.assign(
+      {},
+      ...Object.entries(this.session.view(sourcemapping.views.sources)).map(
+        ([id, source]) => ({
+          [id]: colorizeSourceObject(source)
+        })
+      )
+    );
+
+    // location printouts for command (p): print instruction and state
+    //   sto: Storage
+    //   cal: Calldata
+    //   mem: Memory
+    //   sta: Stack
+    // Note that this is a public variable and can be modified from outside.
+    this.locationPrintouts = new Set(["sta"]);
     this.locations = ["sto", "cal", "mem", "sta"]; //should remain constant
+
+    // section printouts for command (v): print variables and values
+    //   bui: Solidity built-ins
+    //   glo: Global constants
+    //   con: Contract variables
+    //   loc: Local variables
+    // Note that this is a public variable and can be modified from outside.
+    this.sectionPrintouts = new Set(["bui", "glo", "con", "loc"]);
+    this.sections = ["bui", "glo", "con", "loc"]; //should remain constant
+
+    // numbers of instructions before and after the current instruction to be printed
+    // used by commands (p) and (;)
+    // Note that this is a public variable and can be modified from outside.
+    this.instructionLines = { beforeLines: 3, afterLines: 3 };
+
+    // numbers of lines before and after the current line to be printed
+    // used by commands (l) and (s)
+    // Note that this is a public variable and can be modified from outside.
+    this.sourceLines = { beforeLines: 5, afterLines: 3 };
   }
 
   print(...args) {
@@ -127,7 +146,7 @@ class DebugPrinter {
     location = this.session.view(controller.current.location)
   ) {
     const {
-      source: { id: sourceId, compilationId },
+      source: { id: sourceId },
       sourceRange: range
     } = location;
 
@@ -138,12 +157,11 @@ class DebugPrinter {
       return;
     }
 
-    const source = this.session.view(solidity.info.sources)[compilationId].byId[
-      sourceId
-    ].source;
-    //we don't just get extract this from the location because passed-in location may be
-    //missing the soure text
-    const colorizedSource = this.colorizedSources[compilationId][sourceId];
+    //we don't just get extract the source text from the location because passed-in location may be
+    //missing the source text
+    const source = this.session.view(sourcemapping.views.sources)[sourceId]
+      .source;
+    const colorizedSource = this.colorizedSources[sourceId];
 
     debug("range: %o", range);
 
@@ -155,13 +173,39 @@ class DebugPrinter {
     const colorizedLines = splitLines(colorizedSource);
 
     this.config.logger.log("");
+    // We create printoutRange with range.lines as initial value for printing.
+    let printoutRange = range.lines;
+
+    // We print a warning message and display the end of source code when the
+    // instruction's byte-offset to the start of the range in the source code
+    // is past the end of source code.
+    if (range.start >= source.length) {
+      this.config.logger.log(
+        `${colors.bold(
+          "Warning:"
+        )} Location is past end of source, displaying end.`
+      );
+      this.config.logger.log("");
+      // We set the printoutRange with the end of source code.
+      // Note that "lines" is the split lines of source code as defined above.
+      printoutRange = {
+        start: {
+          line: lines.length - 1,
+          column: 0
+        },
+        end: {
+          line: lines.length - 1,
+          column: 0
+        }
+      };
+    }
 
     //HACK -- the line-pointer formatter doesn't work right with colorized
     //lines, so we pass in the uncolored version too
     this.config.logger.log(
       DebugUtils.formatRangeLines(
         colorizedLines,
-        range.lines,
+        printoutRange,
         lines,
         contextBefore,
         contextAfter
@@ -171,8 +215,9 @@ class DebugPrinter {
     this.config.logger.log("");
   }
 
-  printInstruction(locations = this.printouts) {
-    const instruction = this.session.view(solidity.current.instruction);
+  printInstruction(locations = this.locationPrintouts) {
+    const instruction = this.session.view(sourcemapping.current.instruction);
+    const instructions = this.session.view(sourcemapping.current.instructions);
     const step = this.session.view(trace.step);
     const traceIndex = this.session.view(trace.index);
     const totalSteps = this.session.view(trace.steps).length;
@@ -198,11 +243,57 @@ class DebugPrinter {
       this.config.logger.log(DebugUtils.formatStack(step.stack));
       this.config.logger.log("");
     }
-    this.config.logger.log(
-      DebugUtils.formatInstruction(traceIndex + 1, totalSteps, instruction)
-    );
-    this.config.logger.log(DebugUtils.formatPC(step.pc));
+
+    this.config.logger.log("Instructions:");
+    if (!instruction || instruction.pc === undefined) {
+      // printout warning message if the debugger does not have the code for this contract
+      this.config.logger.log(
+        `${colors.bold(
+          "Warning:"
+        )} The debugger does not have the code for this contract.`
+      );
+    } else {
+      // printout instructions
+      const previousInstructions = this.instructionLines.beforeLines;
+      const upcomingInstructions = this.instructionLines.afterLines;
+      const currentIndex = instruction.index;
+
+      // add an ellipse if there exist additional instructions before
+      if (currentIndex - previousInstructions > 0) {
+        this.config.logger.log("...");
+      }
+      // printout 3 previous instructions
+      for (
+        let i = Math.max(currentIndex - previousInstructions, 0);
+        i < currentIndex;
+        i++
+      ) {
+        this.config.logger.log(DebugUtils.formatInstruction(instructions[i]));
+      }
+
+      // printout current instruction
+      this.config.logger.log(DebugUtils.formatCurrentInstruction(instruction));
+
+      // printout 3 upcoming instructions
+      for (
+        let i = currentIndex + 1;
+        i <=
+        Math.min(currentIndex + upcomingInstructions, instructions.length - 1);
+        i++
+      ) {
+        this.config.logger.log(DebugUtils.formatInstruction(instructions[i]));
+      }
+
+      // add an ellipse if there exist additional instructions after
+      if (currentIndex + upcomingInstructions < instructions.length - 1) {
+        this.config.logger.log("...");
+      }
+    }
+
     this.config.logger.log("");
+    this.config.logger.log(
+      "Step " + (traceIndex + 1).toString() + "/" + totalSteps.toString()
+    );
     this.config.logger.log(step.gas + " gas remaining");
   }
 
@@ -229,27 +320,23 @@ class DebugPrinter {
   }
 
   printBreakpoints() {
-    let sources = this.session.view(solidity.info.sources);
-    let sourceNames = Object.assign(
+    const sources = this.session.view(sourcemapping.views.sources);
+    const sourceNames = Object.assign(
+      //note: only include user sources
       {},
-      ...Object.entries(sources).map(([compilationId, compilation]) => ({
-        [compilationId]: Object.assign(
-          {},
-          ...Object.values(compilation.byId).map(({ id, sourcePath }) => ({
-            [id]: path.basename(sourcePath)
-          }))
-        )
+      ...Object.entries(sources).map(([id, source]) => ({
+        [id]: path.basename(source.sourcePath)
       }))
     );
-    let breakpoints = this.session.view(controller.breakpoints);
+    const breakpoints = this.session.view(controller.breakpoints);
     if (breakpoints.length > 0) {
       for (let breakpoint of this.session.view(controller.breakpoints)) {
         let currentLocation = this.session.view(controller.current.location);
         let locationMessage = DebugUtils.formatBreakpointLocation(
           breakpoint,
           currentLocation.node !== undefined &&
-            breakpoint.node === currentLocation.node.id,
-          currentLocation.source.compilationId,
+            breakpoint.sourceId === currentLocation.source.sourceId &&
+            breakpoint.node === currentLocation.astRef,
           currentLocation.source.id,
           sourceNames
         );
@@ -257,6 +344,14 @@ class DebugPrinter {
       }
     } else {
       this.config.logger.log("No breakpoints added.");
+    }
+  }
+
+  printGeneratedSourcesState() {
+    if (this.session.view(controller.stepIntoInternalSources)) {
+      this.config.logger.log("Generated sources are turned on.");
+    } else {
+      this.config.logger.log("Generated sources are turned off.");
     }
   }
 
@@ -271,7 +366,7 @@ class DebugPrinter {
     switch (revertDecodings.length) {
       case 0:
         this.config.logger.log(
-          "There was a revert message, but it could not be decoded."
+          "There was revert data, but it could not be decoded."
         );
         break;
       case 1:
@@ -279,40 +374,65 @@ class DebugPrinter {
         switch (revertDecoding.kind) {
           case "failure":
             this.config.logger.log(
-              "There was no revert message.  This may be due to an in intentional halting expression, such as assert(), revert(), or require(), or could be due to an unintentional exception such as out-of-gas exceptions."
+              "There was no revert message.  This may be due to an intentional halting expression, such as assert(), revert(), or require(), or could be due to an unintentional exception such as out-of-gas exceptions."
             );
             break;
           case "revert":
-            const revertStringInfo = revertDecoding.arguments[0].value.value;
-            let revertString;
-            switch (revertStringInfo.kind) {
-              case "valid":
-                revertString = revertStringInfo.asString;
-                this.config.logger.log(`Revert message: ${revertString}`);
+            const signature = Codec.AbiData.Utils.abiSignature(
+              revertDecoding.abi
+            );
+            switch (signature) {
+              case "Error(string)":
+                const revertStringInfo =
+                  revertDecoding.arguments[0].value.value;
+                let revertString;
+                switch (revertStringInfo.kind) {
+                  case "valid":
+                    revertString = revertStringInfo.asString;
+                    this.config.logger.log(`Revert message: ${revertString}`);
+                    break;
+                  case "malformed":
+                    //turn into a JS string while smoothing over invalid UTF-8
+                    //slice 2 to remove 0x prefix
+                    revertString = Buffer.from(
+                      revertStringInfo.asHex.slice(2),
+                      "hex"
+                    ).toString();
+                    this.config.logger.log(`Revert message: ${revertString}`);
+                    this.config.logger.log(
+                      `${colors.bold(
+                        "Warning:"
+                      )} This message contained invalid UTF-8.`
+                    );
+                    break;
+                }
                 break;
-              case "malformed":
-                //turn into a JS string while smoothing over invalid UTF-8
-                //slice 2 to remove 0x prefix
-                revertString = Buffer.from(
-                  revertStringInfo.asHex.slice(2),
-                  "hex"
-                ).toString();
-                this.config.logger.log(`Revert message: ${revertString}`);
+              case "Panic(uint)":
+                const panicCode = revertDecoding.arguments[0].value.value.asBN;
+                const panicString = DebugUtils.panicString(panicCode, true); //get verbose panic string :)
                 this.config.logger.log(
-                  `${colors.bold(
-                    "Warning:"
-                  )} This message contained invalid UTF-8.`
+                  `Panic: Code 0x${panicCode.toString(
+                    16
+                  )}. This code indicates that ${panicString.toLowerCase()}`
                 );
                 break;
+              default:
+                this.config.logger.log("The following error was thrown:");
+                this.config.logger.log(
+                  DebugUtils.formatCustomError(revertDecoding, 2)
+                );
             }
             break;
         }
         break;
       default:
-        //Note: This shouldn't happen
         this.config.logger.log(
-          "There was a revert message, but it could not be unambiguously decoded."
+          "There was revert data, but it could not be unambiguously decoded."
         );
+        this.config.logger.log("Possible interpretations:");
+        for (const decoding of revertDecodings) {
+          this.config.logger.log(DebugUtils.formatCustomError(decoding, 2));
+        }
         break;
     }
     this.config.logger.log(
@@ -323,6 +443,12 @@ class DebugPrinter {
   async printReturnValue() {
     //note: when printing revert messages, this will do so in a somewhat
     //different way than printRevertMessage does
+    const inspectOptions = {
+      colors: true,
+      depth: null,
+      maxArrayLength: null,
+      breakLength: 30
+    }; //copypaste warning: copied from debug-utils!
     const allocationFound = Boolean(
       this.session.view(data.current.returnAllocation)
     );
@@ -375,57 +501,90 @@ class DebugPrinter {
     } else if (decodings[0].kind === "bytecode") {
       //case 8: known bytecode
       this.config.logger.log("");
+      //we just defer to the ReturndataDecodingInspector in this case
+      this.config.logger.log(
+        util.inspect(
+          new Codec.Export.ReturndataDecodingInspector(decodings[0]),
+          inspectOptions
+        )
+      );
+      this.config.logger.log("");
+    } else if (
+      decodings[0].kind === "revert" &&
+      decodings.filter(decoding => decoding.kind === "revert").length === 1
+    ) {
+      //case 9: revert (with message) (unambiguous)
       const decoding = decodings[0];
-      const contractKind = decoding.contractKind || "contract";
-      if (decoding.address !== undefined) {
-        this.config.logger.log(
-          `Returned bytecode for a ${contractKind} ${decoding.class.typeName} at ${decoding.address}.`
-        );
-      } else {
-        this.config.logger.log(
-          `Returned bytecode for a ${contractKind} ${decoding.class.typeName}.`
-        );
-      }
-      if (decoding.immutables && decoding.immutables.length > 0) {
-        this.config.logger.log("Immutable values:");
-        const prefixes = decoding.immutables.map(
-          ({ name, class: { typeName } }) => `${typeName}.${name}: `
-        );
-        const maxLength = Math.max(...prefixes.map(prefix => prefix.length));
-        const paddedPrefixes = prefixes.map(prefix =>
-          prefix.padStart(maxLength)
-        );
-        for (let index = 0; index < decoding.immutables.length; index++) {
-          const { value } = decoding.immutables[index];
-          const prefix = paddedPrefixes[index];
-          const formatted = DebugUtils.formatValue(value, maxLength);
+      const signature = Codec.AbiData.Utils.abiSignature(decoding.abi);
+      this.config.logger.log("");
+      switch (signature) {
+        case "Error(string)": {
+          //case 9a: revert string
+          //(special handling, don't use inspector)
+          const prefix = "Revert string: ";
+          const value = decodings[0].arguments[0].value;
+          const formatted = DebugUtils.formatValue(value, prefix.length);
           this.config.logger.log(prefix + formatted);
+          break;
         }
+        case "Panic(uint)": {
+          //case 9b: panic code
+          //(special handling, don't use inspector)
+          const prefix = "Panic code: ";
+          const value = decodings[0].arguments[0].value;
+          const formatted = DebugUtils.formatValue(value, prefix.length);
+          const meaning = DebugUtils.panicString(value.value.asBN);
+          this.config.logger.log(`${prefix} ${formatted} (${meaning})`);
+          break;
+        }
+        default:
+          //case 9c: custom error
+          //just use the inspector
+          this.config.logger.log(
+            util.inspect(
+              new Codec.Export.ReturndataDecodingInspector(decodings[0]),
+              inspectOptions
+            )
+          );
       }
       this.config.logger.log("");
-    } else if (decodings[0].kind === "revert") {
-      //case 9: revert (with message)
-      this.config.logger.log("");
-      const prefix = "Revert string: ";
-      const value = decodings[0].arguments[0].value;
-      const formatted = DebugUtils.formatValue(value, prefix.length);
-      this.config.logger.log(prefix + formatted);
-      this.config.logger.log("");
+    } else if (
+      decodings[0].kind === "revert" &&
+      decodings.filter(decoding => decoding.kind === "revert").length > 1
+    ) {
+      //case 10: ambiguous revert with message
+      this.config.logger.log(
+        "Ambiguous error thrown, possible interpretations:"
+      );
+      for (const decoding of decodings) {
+        if (decoding.kind !== "revert") {
+          break;
+        }
+        //again, we can use the inspector
+        this.config.logger.log(
+          util.inspect(
+            new Codec.Export.ReturndataDecodingInspector(decodings[0]),
+            inspectOptions
+          )
+        );
+      }
     } else if (
       decodings[0].kind === "return" &&
       decodings[0].arguments.length > 0
     ) {
-      //case 10: actual return values to print!
+      //case 11: actual return values to print!
+      //we're not going to use the inspector here, we're going to
+      //handle this in a custom manner
       this.config.logger.log("");
       const values = decodings[0].arguments;
       if (values.length === 1 && !values[0].name) {
-        //case 10a: if there's only one value and it's unnamed
+        //case 11a: if there's only one value and it's unnamed
         const value = values[0].value;
         const prefix = "Returned value: ";
         const formatted = DebugUtils.formatValue(value, prefix.length);
         this.config.logger.log(prefix + formatted);
       } else {
-        //case 10b: otherwise
+        //case 11b: otherwise
         this.config.logger.log("Returned values:");
         const prefixes = values.map(({ name }, index) =>
           name ? `${name}: ` : `Component #${index + 1}: `
@@ -442,6 +601,32 @@ class DebugPrinter {
         }
       }
       this.config.logger.log("");
+    } else if (decodings[0].kind === "returnmessage") {
+      //case 12: raw binary data
+      //(special handling, don't use inspector)
+      this.config.logger.log("");
+      const fallbackOutputDefinition = this.session.view(
+        data.current.fallbackOutputForContext
+      );
+      const name = (fallbackOutputDefinition || {}).name;
+      const prettyData = `${colors.green("hex")}${DebugUtils.formatValue(
+        decodings[0].data.slice(2), //remove '0x'
+        0,
+        true
+      )}`;
+      if (name) {
+        //case 12a: it has a name
+        this.config.logger.log("Returned values:");
+        this.config.logger.log(`${name}: ${prettyData}`);
+      } else {
+        //case 12b: it doesn't
+        this.config.logger.log(`Returned value: ${prettyData}`);
+      }
+      //it's already a string, so we'll pass the nativized parameter
+      //and hack this together :)
+      //also, since we only have one thing and it's a string, we'll skip
+      //fancy indent processing
+      this.config.logger.log("");
     }
   }
 
@@ -451,6 +636,22 @@ class DebugPrinter {
       ? this.session.view(stacktrace.current.finalReport)
       : this.session.view(stacktrace.current.report);
     this.config.logger.log(DebugUtils.formatStacktrace(report));
+  }
+
+  printErrorLocation(linesBefore, linesAfter) {
+    const stacktraceReport = this.session.view(stacktrace.current.finalReport);
+    const lastUserFrame = stacktraceReport
+      .slice()
+      .reverse() //clone before reversing, reverse is in-place!
+      .find(frame => !frame.location.internal);
+    if (lastUserFrame) {
+      this.config.logger.log("");
+      this.config.logger.log(
+        DebugUtils.truffleColors.red("Location of error:")
+      );
+      this.printFile(lastUserFrame.location);
+      this.printState(linesBefore, linesAfter, lastUserFrame.location);
+    }
   }
 
   async printWatchExpressionsResults(expressions) {
@@ -479,20 +680,27 @@ class DebugPrinter {
     }
   }
 
-  async printVariables() {
-    const values = await this.session.variables();
+  async printVariables(sectionOuts = this.sectionPrintouts) {
+    const values = await this.session.variables({ indicateUnknown: true });
     const sections = this.session.view(data.current.identifiers.sections);
 
     const sectionNames = {
       builtin: "Solidity built-ins",
+      global: "Global constants",
       contract: "Contract variables",
       local: "Local variables"
     };
 
     this.config.logger.log();
 
+    let printLegend = false;
+
+    // printout the sections that are included in the inputs and have positive contents length
     for (const [section, variables] of Object.entries(sections)) {
-      if (variables.length > 0) {
+      // only check the first 3 characters of each name given in the input sectionPrintouts
+      // since each section name defined in the constructor contains 3 characters
+      const printThisSection = sectionOuts.has(section.slice(0, 3));
+      if (printThisSection && variables.length > 0) {
         this.config.logger.log(sectionNames[section] + ":");
         // Get the length of the longest name.
         const longestNameLength = variables.reduce((longest, name) => {
@@ -506,9 +714,18 @@ class DebugPrinter {
             longestNameLength + 5
           );
           this.config.logger.log("  " + paddedName, formatted);
+          if (Codec.Export.containsDeliberateReadError(value)) {
+            printLegend = true;
+          }
         }
         this.config.logger.log();
       }
+    }
+
+    if (printLegend) {
+      this.config.logger.log(
+        "Note: Some storage variables could not be fully decoded; the debugger can only see storage it has seen touched during the transaction."
+      );
     }
   }
 
@@ -525,7 +742,7 @@ class DebugPrinter {
    *        :!<trace.step.stack>[1]
    */
   async evalAndPrintExpression(raw, indent, suppress) {
-    let variables = await this.session.variables();
+    let variables = await this.session.variables({ indicateUnknown: true });
 
     //if we're just dealing with a single variable, handle that case
     //separately (so that we can do things in a better way for that
@@ -535,6 +752,11 @@ class DebugPrinter {
       let formatted = DebugUtils.formatValue(variables[variable], indent);
       this.config.logger.log(formatted);
       this.config.logger.log();
+      if (Codec.Export.containsDeliberateReadError(variables[variable])) {
+        this.config.logger.log(
+          "Note: Variable could not be fully decoded as the debugger can only see storage it has seen touched during the transaction."
+        );
+      }
       return;
     }
     debug("expression case");
@@ -552,7 +774,7 @@ class DebugPrinter {
     //if we're not in the single-variable case, we'll need to do some
     //things to Javascriptify our variables so that the JS syntax for
     //using them is closer to the Solidity syntax
-    let context = Codec.Format.Utils.Inspect.nativizeVariables(variables);
+    let context = Codec.Format.Utils.Inspect.unsafeNativizeVariables(variables);
 
     //HACK -- we can't use "this" as a variable name, so we're going to
     //find an available replacement name, and then modify the context

@@ -5,10 +5,11 @@ import { combineReducers } from "redux";
 
 import data from "lib/data/reducers";
 import evm from "lib/evm/reducers";
-import solidity from "lib/solidity/reducers";
+import sourcemapping from "lib/sourcemapping/reducers";
 import trace from "lib/trace/reducers";
 import controller from "lib/controller/reducers";
 import stacktrace from "lib/stacktrace/reducers";
+import txlog from "lib/txlog/reducers";
 
 import * as actions from "./actions";
 
@@ -96,8 +97,9 @@ const session = combineReducers({
 const reduceState = combineReducers({
   session,
   data,
+  txlog,
   evm,
-  solidity,
+  sourcemapping,
   stacktrace,
   trace,
   controller

@@ -1,4 +1,4 @@
-import { LinkReference, CompiledContract } from "../types";
+import type { LinkReference, CompiledContract } from "../types";
 
 export function forContract(contract: CompiledContract): any {
   const {
@@ -16,7 +16,10 @@ export function forContract(contract: CompiledContract): any {
     compiler,
     devdoc,
     userdoc,
-    immutableReferences
+    immutableReferences,
+    generatedSources,
+    deployedGeneratedSources,
+    db
   } = contract;
 
   return {
@@ -35,7 +38,10 @@ export function forContract(contract: CompiledContract): any {
     compiler,
     devdoc,
     userdoc,
-    immutableReferences
+    immutableReferences,
+    generatedSources,
+    deployedGeneratedSources,
+    db
   };
 }
 

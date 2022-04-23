@@ -1,21 +1,31 @@
-import * as Compiler from "@truffle/codec/compiler";
-import * as Ast from "@truffle/codec/ast";
-import * as AbiData from "@truffle/codec/abi-data/types";
-import * as Contexts from "@truffle/codec/contexts/types";
-import * as Pointer from "@truffle/codec/pointer";
-import { DecodingMode } from "@truffle/codec/types";
-import { ImmutableReferences } from "@truffle/contract-schema/spec";
-import * as Format from "@truffle/codec/format";
+import type * as Abi from "@truffle/abi-utils";
 
-//for passing to calldata/event/state allocation functions
+import type * as Compiler from "@truffle/codec/compiler";
+import type * as Compilations from "@truffle/codec/compilations";
+import type * as Ast from "@truffle/codec/ast";
+import type * as Contexts from "@truffle/codec/contexts/types";
+import type * as Pointer from "@truffle/codec/pointer";
+import type { DecodingMode } from "@truffle/codec/types";
+import type { ImmutableReferences } from "@truffle/contract-schema/spec";
+import type * as Format from "@truffle/codec/format";
+
+//for passing to calldata/returndata/event/state allocation functions
 export interface ContractAllocationInfo {
-  abi?: AbiData.Abi; //needed for events & calldata
-  contractNode: Ast.AstNode; //needed for all 3
-  deployedContext?: Contexts.DecoderContext; //needed for events & calldata
-  constructorContext?: Contexts.DecoderContext; //needed for calldata
+  abi?: Abi.Abi; //needed for all but state
+  contractNode: Ast.AstNode; //needed for all
+  deployedContext?: Contexts.Context; //needed for all
+  constructorContext?: Contexts.Context; //needed for calldata & returndata; eventually will be needed for events
   immutableReferences?: ImmutableReferences; //needed for state
-  compiler: Compiler.CompilerVersion; //needed for all 3
-  compilationId?: string; //needed for all 3
+  compiler: Compiler.CompilerVersion; //needed for all
+  compilationId?: string; //needed for all
+}
+
+export interface ContractAndContexts {
+  compilationId: string;
+  contract: Compilations.Contract;
+  node: Ast.AstNode;
+  deployedContext?: Contexts.Context;
+  constructorContext?: Contexts.Context;
 }
 
 export interface AbiSizeInfo {
@@ -60,22 +70,31 @@ export interface CalldataAllocations {
 }
 
 export interface CalldataConstructorAllocations {
-  [contextHash: string]: CalldataAndReturndataAllocation; //note: just constructor ones
+  [contextHash: string]: ConstructorCalldataAndReturndataAllocation; //note: just constructor ones
 }
 
 export interface CalldataFunctionAllocations {
   [contextHash: string]: {
-    [selector: string]: CalldataAndReturndataAllocation; //note: just function ones
+    [selector: string]: FunctionCalldataAndReturndataAllocation; //note: just function ones
   };
 }
 
-export interface CalldataAndReturndataAllocation {
+export interface ConstructorCalldataAndReturndataAllocation {
   input: CalldataAllocation;
-  output: ReturndataAllocation; //return data will be discussed below
+  output: ConstructorReturndataAllocation;
 }
 
+export interface FunctionCalldataAndReturndataAllocation {
+  input: CalldataAllocation;
+  output: ReturnValueReturndataAllocation;
+}
+
+export type CalldataAndReturndataAllocation =
+  | FunctionCalldataAndReturndataAllocation
+  | ConstructorCalldataAndReturndataAllocation;
+
 export interface CalldataAllocation {
-  abi: AbiData.FunctionAbiEntry | AbiData.ConstructorAbiEntry;
+  abi: Abi.FunctionEntry | Abi.ConstructorEntry;
   offset: number; //measured in bytes
   arguments: CalldataArgumentAllocation[];
   allocationMode: DecodingMode;
@@ -114,9 +133,10 @@ export interface EventAllocations {
 }
 
 export interface EventAllocation {
-  abi: AbiData.EventAbiEntry;
+  abi: Abi.EventEntry;
   contextHash: string;
   definedIn?: Format.Types.ContractType; //is omitted if we don't know
+  id?: string; //is omitted if we don't know
   anonymous: boolean;
   arguments: EventArgumentAllocation[];
   allocationMode: DecodingMode;
@@ -128,28 +148,57 @@ export interface EventArgumentAllocation {
   pointer: Pointer.EventDataPointer | Pointer.EventTopicPointer;
 }
 
-//now let's go back ands fill in returndata
-type ReturndataKind = FunctionReturndataKind | ConstructorReturndataKind;
-
-type FunctionReturndataKind = "return" | "revert" | "failure" | "selfdestruct";
-type ConstructorReturndataKind = "bytecode";
+//now let's go back and fill in returndata
+export interface ReturndataAllocations {
+  [contextHash: string]: { //NOTE: contextHash here can also be "" to represent no context
+    [selector: string]: RevertReturndataAllocation[];
+  };
+}
 
 export type ReturndataAllocation =
-  | FunctionReturndataAllocation
-  | ConstructorReturndataAllocation;
+  | ReturnValueReturndataAllocation
+  | RevertReturndataAllocation
+  | ConstructorReturndataAllocation
+  | MessageReturndataAllocation
+  | BlankReturndataAllocation;
 
-export interface FunctionReturndataAllocation {
-  kind: FunctionReturndataKind;
+export interface ReturnValueReturndataAllocation {
+  kind: "return";
+  selector: Uint8Array; //must be empty, but requred for type niceness
+  arguments: ReturndataArgumentAllocation[];
+  allocationMode: DecodingMode;
+}
+
+export interface RevertReturndataAllocation {
+  kind: "revert";
   selector: Uint8Array;
+  abi: Abi.ErrorEntry;
+  id?: string; //may be omitted if we don't know
+  definedIn?: Format.Types.ContractType | null; //may be omitted if unknown
+  //note that null means it's a "free error", while undefined means we don't
+  //know
   arguments: ReturndataArgumentAllocation[];
   allocationMode: DecodingMode;
 }
 
 export interface ConstructorReturndataAllocation {
-  kind: ConstructorReturndataKind;
+  kind: "bytecode";
   selector: Uint8Array; //must be empty, but is required for type niceness
   immutables?: ReturnImmutableAllocation[];
   delegatecallGuard: boolean;
+  allocationMode: DecodingMode;
+}
+
+export interface BlankReturndataAllocation {
+  kind: "failure" | "selfdestruct";
+  selector: Uint8Array; //must be empty, but is required for type niceness
+  arguments: []; //must be empty, but required for type niceness
+  allocationMode: DecodingMode;
+}
+
+export interface MessageReturndataAllocation {
+  kind: "returnmessage";
+  selector: Uint8Array; //must be empty, but is required for type niceness
   allocationMode: DecodingMode;
 }
 
@@ -175,8 +224,8 @@ export interface EventAllocationTemporary {
 }
 
 export interface CalldataAllocationTemporary {
-  constructorAllocation?: CalldataAndReturndataAllocation;
+  constructorAllocation?: ConstructorCalldataAndReturndataAllocation;
   functionAllocations: {
-    [selector: string]: CalldataAndReturndataAllocation;
+    [selector: string]: FunctionCalldataAndReturndataAllocation;
   };
 }

@@ -7,28 +7,21 @@ class SubscriberAggregator {
   }
 
   initializeSubscribers(initializationOptions) {
-    let { emitter, logger, muteLogging, subscribers } = initializationOptions;
-    if (muteLogging) logger = () => {};
+    let { emitter, subscribers, config } = initializationOptions;
     for (let name in subscribers) {
       this.subscribers.push(
         new Subscriber({
+          config,
           options: subscribers[name],
-          emitter,
-          logger
+          emitter
         })
       );
     }
   }
 
-  updateSubscriberOptions(newOptions) {
-    let { logger, muteLogging } = newOptions;
-    if (muteLogging) {
-      logger = { log: () => {} };
-    }
+  updateSubscriberOptions(config) {
     this.subscribers.forEach(subscriber => {
-      subscriber.updateOptions({
-        logger
-      });
+      subscriber.updateOptions(config);
     });
   }
 }

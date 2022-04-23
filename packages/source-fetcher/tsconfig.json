@@ -10,19 +10,14 @@
     "sourceMap": true,
     "outDir": "dist",
     "baseUrl": ".",
-    "lib": ["es2017"],
+    "lib": ["es2019"],
     "paths": {
     },
     "rootDir": "lib",
-    "typeRoots": [
-      "./typings",
-      "../../**/node_modules/@types/debug"
-    ]
-
+    "types": ["debug", "node"]
   },
   "include": [
-    "./lib/**/*.ts",
-    "./typings/**/*.d.ts"
+    "./lib/**/*.ts"
   ]
 
 }

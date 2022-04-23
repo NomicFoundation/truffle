@@ -1,5 +1,4 @@
 const expect = require("@truffle/expect");
-const Emittery = require("emittery");
 const DeferredChain = require("./src/deferredchain");
 const Deployment = require("./src/deployment");
 const link = require("./src/actions/link");
@@ -8,25 +7,24 @@ const ENS = require("./ens");
 
 class Deployer extends Deployment {
   constructor(options) {
-    options = options || {};
     expect.options(options, ["provider", "networks", "network", "network_id"]);
+    super(options);
 
-    const emitter = new Emittery();
-    super(emitter, options);
-
-    this.emitter = emitter;
+    this.options = options;
     this.chain = new DeferredChain();
-    this.logger = options.logger || { log: function() {} };
     this.network = options.network;
     this.networks = options.networks;
     this.network_id = options.network_id;
     this.provider = options.provider;
-    this.basePath = options.basePath || process.cwd();
     this.known_contracts = {};
     if (options.ens && options.ens.enabled) {
+      options.ens.registryAddress = this.networks[this.network].registry
+        ? this.networks[this.network].registry.address
+        : null;
       this.ens = new ENS({
         provider: options.provider,
-        ensSettings: options.ens
+        networkId: options.network_id,
+        ens: options.ens
       });
     }
 
@@ -48,7 +46,6 @@ class Deployer extends Deployment {
   deploy() {
     const args = Array.prototype.slice.call(arguments);
     const contract = args.shift();
-
     return this.queueOrExec(this.executeDeployment(contract, args, this));
   }
 
@@ -60,7 +57,7 @@ class Deployer extends Deployment {
   }
 
   then(fn) {
-    return this.queueOrExec(function() {
+    return this.queueOrExec(function () {
       return fn(this);
     });
   }
@@ -72,7 +69,6 @@ class Deployer extends Deployment {
   }
 
   finish() {
-    this.emitter.clearListeners();
     this.close();
   }
 }

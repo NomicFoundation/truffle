@@ -1,7 +1,7 @@
 import path from "path";
 import fs from "fs";
 
-import { ResolverSource } from "../source";
+import type { ResolverSource } from "../source";
 
 export class NPM implements ResolverSource {
   workingDirectory: string;
@@ -27,20 +27,12 @@ export class NPM implements ResolverSource {
       if (!basePath) {
         continue;
       }
-      const expectedPath = path.join(
-        basePath,
-        "node_modules",
-        packageName,
-        "build",
-        "contracts",
-        contractName + ".json"
-      );
-      try {
-        const result = fs.readFileSync(expectedPath, "utf8");
-        return JSON.parse(result);
-      } catch (e) {
-        continue;
+      const result = this.resolveAndParse(basePath, packageName, contractName);
+      // result is null if it fails to resolve
+      if (result) {
+        return result;
       }
+      continue;
     }
     return null;
   }
@@ -68,13 +60,38 @@ export class NPM implements ResolverSource {
     return { body, filePath: import_path };
   }
 
+  resolveAndParse(basePath: string, packageName: string, contractName: string) {
+    const packagePath = path.join(basePath, "node_modules", packageName);
+    const subDirs = [`build${path.sep}contracts`, "build"];
+    for (const subDir of subDirs) {
+      const possiblePath = path.join(
+        packagePath,
+        subDir,
+        `${contractName}.json`
+      );
+      try {
+        const result = fs.readFileSync(possiblePath, "utf8");
+        return JSON.parse(result);
+      } catch (e) {
+        continue;
+      }
+    }
+    return null;
+  }
+
   // We're resolving package paths to other package paths, not absolute paths.
   // This will ensure the source fetcher conintues to use the correct sources for packages.
   // i.e., if some_module/contracts/MyContract.sol imported "./AnotherContract.sol",
   // we're going to resolve it to some_module/contracts/AnotherContract.sol, ensuring
   // that when this path is evaluated this source is used again.
-  resolveDependencyPath(import_path: string, dependency_path: string) {
-    var dirname = path.dirname(import_path);
-    return path.join(dirname, dependency_path);
+  resolveDependencyPath(importPath: string, dependencyPath: string) {
+    if (
+      !(dependencyPath.startsWith("./") || dependencyPath.startsWith("../"))
+    ) {
+      //if it's *not* a relative path, return it unchanged
+      return dependencyPath;
+    }
+    var dirname = path.dirname(importPath);
+    return path.join(dirname, dependencyPath);
   }
 }

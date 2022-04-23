@@ -68,7 +68,7 @@ var properties = {
       if (typeof value === "string") {
         try {
           value = JSON.parse(value);
-        } catch (e) {
+        } catch (_) {
           value = undefined;
         }
       }
@@ -107,9 +107,31 @@ var properties = {
   generatedSources: {},
   deployedGeneratedSources: {},
   sourceMap: {
+    transform: function (value) {
+      if (typeof value === "string") {
+        try {
+          return JSON.parse(value);
+        } catch (_) {
+          return value;
+        }
+      } else {
+        return value;
+      }
+    },
     sources: ["sourceMap", "srcmap", "evm.bytecode.sourceMap"]
   },
   deployedSourceMap: {
+    transform: function (value) {
+      if (typeof value === "string") {
+        try {
+          return JSON.parse(value);
+        } catch (_) {
+          return value;
+        }
+      } else {
+        return value;
+      }
+    },
     sources: [
       "deployedSourceMap",
       "srcmapRuntime",
@@ -119,18 +141,7 @@ var properties = {
   source: {},
   sourcePath: {},
   ast: {},
-  legacyAST: {
-    transform: function (value, obj) {
-      var schemaVersion = obj.schemaVersion || "0.0.0";
-
-      // legacyAST introduced in v2.0.0
-      if (schemaVersion[0] < 2) {
-        return obj.ast;
-      } else {
-        return value;
-      }
-    }
-  },
+  legacyAST: {},
   compiler: {},
   networks: {
     /**
@@ -176,7 +187,8 @@ var properties = {
   },
   networkType: {},
   devdoc: {},
-  userdoc: {}
+  userdoc: {},
+  db: {}
 };
 
 /**
@@ -195,7 +207,7 @@ function getter(key, transform) {
   return function (obj) {
     try {
       return transform(obj[key]);
-    } catch (e) {
+    } catch (_) {
       return undefined;
     }
   };
@@ -244,7 +256,6 @@ var TruffleContractSchema = {
             params,
             message,
             data,
-            schema, // eslint-disable-line no-unused-vars
             parentSchema
           }) =>
             util.format(

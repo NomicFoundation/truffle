@@ -2,25 +2,30 @@
   "private": true,
   "scripts": {
     "bootstrap": "npx lerna bootstrap",
-    "prepare": "lerna run prepare --stream --concurrency=1",
+    "prepare": "lerna run prepare --stream --concurrency=1 && husky install",
     "publish-release": "./scripts/publish-release.sh",
     "publish-dist-tag": "./scripts/publish-dist-tag.sh",
     "prepare-release": "./scripts/prepare-release.sh",
     "test": "lerna run test --stream --concurrency=1 -- --colors",
     "ci": "./scripts/ci.sh",
     "geth": "./scripts/geth.sh",
+    "dependency-graph": "lerna-dependency-graph -f pdf -o dependency-graph.pdf",
     "solc-bump": "node ./scripts/solc-bump.js",
     "update": "lernaupdate"
   },
   "devDependencies": {
-    "coveralls": "^3.0.2",
-    "eslint": "^5.7.0",
-    "husky": "^1.2.0",
-    "lerna": "^3.16.4",
-    "lerna-update-wizard": "^0.16.0",
-    "lint-staged": "^7.3.0",
-    "nyc": "^13.0.1",
-    "prettier": "^2.0.5",
+    "@typescript-eslint/eslint-plugin": "^5.6.0",
+    "@typescript-eslint/parser": "^5.6.0",
+    "coveralls": "^3.1.1",
+    "eslint": "^8.4.1",
+    "eslint-plugin-react-hooks": "^4.2.0",
+    "husky": "^7.0.4",
+    "lerna": "^4.0.0",
+    "lerna-dependency-graph": "^1.1.0",
+    "lerna-update-wizard": "1.1.2",
+    "lint-staged": "^12.1.2",
+    "nyc": "15.1.0",
+    "prettier": "^2.5.1",
     "prs-merged-since": "^1.1.0"
   },
   "workspaces": {
@@ -29,20 +34,8 @@
     ]
   },
   "dependencies": {},
-  "husky": {
-    "hooks": {
-      "pre-commit": "lint-staged"
-    }
-  },
   "lint-staged": {
-    "*.js": [
-      "prettier --write",
-      "eslint --fix",
-      "git add"
-    ],
-    "*.ts": [
-      "prettier --write",
-      "git add"
-    ]
+    "*.{js,ts,jsx,tsx}": "eslint --fix",
+    "*.{js,ts,jsx,tsx,css,md}": "prettier --write"
   }
 }

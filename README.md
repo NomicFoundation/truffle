@@ -6,7 +6,7 @@ This is a fork of the Truffle monorepo.
 
 | Project              | Forked Version   | Changes                                 |
 | -------------------- | :--------------: | --------------------------------------- |
-| `@truffle/contract`  |    `v4.2.23`     | Added Solidity stack traces integration |
+| `@truffle/contract`  |    `v4.5.7`      | Added Solidity stack traces integration |
 
 
 ## Versioning

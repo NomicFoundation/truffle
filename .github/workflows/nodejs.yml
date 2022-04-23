@@ -8,28 +8,41 @@ on:
     - develop
     - next
 
-    # other targets
-    - truffle-db
-
   pull_request:
     branches:
       - "*"
 
 jobs:
+  yarncheck:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v2
+      - uses: actions/setup-node@v2
+      - run: npm install -g yarn
+      - run: yarn install --ignore-scripts --ignore-engines
+      - run: test -z "$(git diff)" || (echo 'Please run yarn and commit all changes to yarn.lock'; false)
+
+
   build:
     strategy:
       matrix:
         platform: [ubuntu-latest]
-        node-version: [10.x, 12.x]
+        node-version: [12.x, 14.x, 16.x]
         env: [GETH=true, PACKAGES=true, INTEGRATION=true]
     runs-on: ${{ matrix.platform }}
 
     steps:
-    - uses: actions/checkout@v1
+    - uses: actions/checkout@v2
     - name: Use Node.js ${{ matrix.node-version }}
-      uses: actions/setup-node@v1
+      uses: actions/setup-node@v2
       with:
         node-version: ${{ matrix.node-version }}
+
+    # fallback to npm6 for node 16
+    - name: fallback to npm 6 on node 16
+      if: ${{ matrix.node-version == '16.x' }}
+      run: npm -g install npm@6
+
     - run: npm install -g yarn
     - run: yarn bootstrap
     - run: ${{ matrix.env }} yarn ci
@@ -45,14 +58,16 @@ jobs:
       if: failure()
 
   slack_notification:
-    needs: build
+    needs: [yarncheck, build]
     runs-on: ubuntu-latest
     continue-on-error: true
     steps:
-      - uses: 8398a7/action-slack@v1.1.1
+      - uses: 8398a7/action-slack@v3
         continue-on-error: true
         with:
-          type: success
+          channel: '#truffle-ci-notifications'
+          status: ${{ job.status }}
+          fields: commit,author,pullRequest
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}

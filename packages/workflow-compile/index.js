@@ -2,11 +2,7 @@ const debug = require("debug")("workflow-compile");
 const fse = require("fs-extra");
 const { prepareConfig } = require("./utils");
 const { Shims } = require("@truffle/compile-common");
-const {
-  reportCompilationStarted,
-  reportNothingToCompile,
-  reportCompilationFinished
-} = require("./reports");
+const { getTruffleDb } = require("@truffle/db-loader");
 
 const SUPPORTED_COMPILERS = {
   solc: require("@truffle/compile-solidity").Compile,
@@ -50,9 +46,10 @@ async function compile(config) {
     return a;
   }, []);
 
-  const contracts = compilations.reduce((a, compilation) => {
-    return a.concat(compilation.contracts);
-  }, []);
+  // collect together contracts as well as compilations
+  const contracts = rawCompilations.flatMap(
+    compilerResult => compilerResult.contracts
+  );
 
   // return WorkflowCompileResult
   return { contracts, compilations };
@@ -73,7 +70,11 @@ const WorkflowCompile = {
       .filter(compiler => compiler);
 
     if (contracts.length === 0 && config.events) {
-      config.events.emit("compile:nothingToCompile");
+      if (config.compileNone || config["compile-none"]) {
+        config.events.emit("compile:skipped");
+      } else {
+        config.events.emit("compile:nothingToCompile");
+      }
     }
 
     if (config.events) {
@@ -82,6 +83,7 @@ const WorkflowCompile = {
         compilers
       });
     }
+
     return {
       contracts,
       compilations
@@ -90,24 +92,63 @@ const WorkflowCompile = {
 
   async compileAndSave(options) {
     const { contracts, compilations } = await this.compile(options);
-    await this.save(options, { contracts, compilations });
-    return {
-      contracts,
-      compilations
-    };
+
+    return await this.save(options, { contracts, compilations });
   },
 
-  reportCompilationStarted,
-  reportCompilationFinished,
-  reportNothingToCompile,
-
-  async save(options, { contracts, _compilations }) {
+  async save(options, { contracts, compilations }) {
     const config = prepareConfig(options);
 
     await fse.ensureDir(config.contracts_build_directory);
 
+    if (options.db && options.db.enabled === true && contracts.length > 0) {
+      // currently if Truffle Db fails to load, getTruffleDb returns `null`
+      const Db = getTruffleDb();
+
+      if (Db) {
+        debug("saving to @truffle/db");
+        const db = Db.connect(config.db);
+        const project = await Db.Project.initialize({
+          db,
+          project: {
+            directory: config.working_directory
+          }
+        });
+        ({ contracts, compilations } = await project.loadCompile({
+          result: { contracts, compilations }
+        }));
+      }
+    }
+
     const artifacts = contracts.map(Shims.NewToLegacy.forContract);
     await config.artifactor.saveAll(artifacts);
+
+    return { contracts, compilations };
+  },
+
+  async assignNames(options, { contracts }) {
+    // currently if Truffle Db fails to load, getTruffleDb returns `null`
+    const Db = getTruffleDb();
+
+    const config = prepareConfig(options);
+
+    if (!Db || !config.db || !config.db.enabled || contracts.length === 0) {
+      return;
+    }
+
+    const db = Db.connect(config.db);
+    const project = await Db.Project.initialize({
+      db,
+      project: {
+        directory: config.working_directory
+      }
+    });
+
+    await project.assignNames({
+      assignments: {
+        contracts: contracts.map(({ db: { contract } }) => contract)
+      }
+    });
   }
 };
 

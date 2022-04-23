@@ -1,6 +1,7 @@
 export interface FetcherConstructor {
   readonly fetcherName: string;
   forNetworkId(networkId: number, options?: FetcherOptions): Promise<Fetcher>;
+  getSupportedNetworks(): SupportedNetworks;
 }
 
 export interface Fetcher {
@@ -8,12 +9,22 @@ export interface Fetcher {
    * should have same name as the static version
    */
   readonly fetcherName: string;
-  isNetworkValid(): Promise<boolean>;
   /**
-   * returns null if no Solidity sources for address
-   * (address not in system, sources are Vyper, whatever)
+   * returns null if no sources for address
+   * (also may return null if the sources fall under an unsupported
+   * case, although currently there are no such cases)
    */
   fetchSourcesForAddress(address: string): Promise<SourceInfo | null>;
+}
+
+export interface NetworkInfo {
+  name: string;
+  networkId: number;
+  chainId: number;
+}
+
+export interface SupportedNetworks {
+  [name: string]: NetworkInfo;
 }
 
 export interface FetcherOptions {
@@ -21,6 +32,7 @@ export interface FetcherOptions {
 }
 
 export interface SourceInfo {
+  contractName?: string;
   sources: SourcesByPath;
   options: CompilerOptions;
 }
@@ -36,20 +48,48 @@ export interface SolcOptions {
   language: "Solidity" | "Yul"; //again, only Solidity really supported atm
   version: string;
   settings: SolcSettings;
+  specializations: SolcSpecializations;
 }
 
 export interface VyperOptions {
   language: "Vyper";
+  version: string;
+  settings: VyperSettings;
+  specializations: VyperSpecializations;
 }
 
 //only including settings that would alter compiled result
+//(no outputSelection, no modelChecker once that exists, no stopAfter)
 export interface SolcSettings {
   remappings?: string[];
   optimizer?: OptimizerSettings;
   evmVersion?: string; //not gonna enumerate these
   debug?: DebugSettings;
   metadata?: MetadataSettings;
-  libraries?: LibrarySettings; //note: we don't actually want to pass this!
+  viaIR?: boolean;
+  libraries?: LibrarySettings; //note: we don't actually want to return this!
+  compilationTarget?: {
+    //not actually a valid compiler setting, but rather where the
+    //contract name is stored! (as the lone value, the lone key being the source
+    //where it's defined)
+    [sourcePath: string]: string;
+  };
+}
+
+export interface VyperSettings {
+  evmVersion?: string; //not gonna enumerate these
+  optimize?: boolean; //warning: the Vyper compiler treats this as true if it's not specified!
+  //also Etherscan currently doesn't support this flag; any Vyper contract currently
+  //verified on Etherscan necessarily has this field unspecified (and thus effectively true)
+}
+
+export interface SolcSpecializations {
+  libraries?: LibrarySettings;
+  constructorArguments?: string; //encoded, as hex string, w/o 0x in front
+}
+
+export interface VyperSpecializations {
+  constructorArguments?: string; //encoded, as hex string, w/o 0x in front
 }
 
 export interface SolcSources {
@@ -64,7 +104,6 @@ export interface SolcInput {
   language: "Solidity";
   sources: SolcSources;
   settings: SolcSettings;
-  //there's also outputSelection, but, frankly, we don't care about this
 }
 
 export interface SolcMetadata {

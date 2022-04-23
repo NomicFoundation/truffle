@@ -1,20 +1,20 @@
-var assert = require("chai").assert;
-var Box = require("@truffle/box");
-var Migrate = require("@truffle/migrate");
-var WorkflowCompile = require("@truffle/workflow-compile");
-var Networks = require("../lib/networks");
-var path = require("path");
-var fs = require("fs-extra");
-var glob = require("glob");
-var Ganache = require("ganache-core");
-var Resolver = require("@truffle/resolver");
-var Artifactor = require("@truffle/artifactor");
-var Web3 = require("web3");
+const assert = require("chai").assert;
+const { default: Box } = require("@truffle/box");
+const Migrate = require("@truffle/migrate");
+const WorkflowCompile = require("@truffle/workflow-compile");
+const Networks = require("../lib/networks");
+const path = require("path");
+const fs = require("fs-extra");
+const glob = require("glob");
+const Ganache = require("ganache");
+const Resolver = require("@truffle/resolver");
+const Artifactor = require("@truffle/artifactor");
+const Web3 = require("web3");
 
 describe("migrate", function () {
-  var config;
+  let config;
 
-  before("Create a sandbox", async () => {
+  before("Create a sandbox", async function () {
     config = await Box.sandbox("default");
     config.resolver = new Resolver(config);
     config.artifactor = new Artifactor(config.contracts_build_directory);
@@ -22,8 +22,16 @@ describe("migrate", function () {
   });
 
   function createProviderAndSetNetworkConfig(network) {
-    var provider = Ganache.provider({ seed: network, gasLimit: config.gas });
-    var web3 = new Web3(provider);
+    const provider = Ganache.provider({
+      seed: network,
+      miner: {
+        instamine: "strict"
+      },
+      logging: {
+        quiet: true
+      }
+    });
+    const web3 = new Web3(provider);
     return web3.eth.getAccounts().then(accs => {
       return web3.eth.net.getId().then(network_id => {
         config.networks[network] = {
@@ -51,7 +59,7 @@ describe("migrate", function () {
     });
   });
 
-  it("profiles a new project as not having any contracts deployed", async () => {
+  it("profiles a new project as not having any contracts deployed", async function () {
     const networks = await Networks.deployed(config);
     assert.equal(
       Object.keys(networks).length,
@@ -70,7 +78,7 @@ describe("migrate", function () {
     );
   });
 
-  it("links libraries in initial project, and runs all migrations", async () => {
+  it("links libraries in initial project, and runs all migrations", async function () {
     this.timeout(10000);
 
     config.network = "primary";
@@ -112,7 +120,7 @@ describe("migrate", function () {
     );
   });
 
-  it("should migrate secondary network without altering primary network", async () => {
+  it("should migrate secondary network without altering primary network", async function () {
     this.timeout(10000);
 
     config.network = "secondary";
@@ -180,7 +188,7 @@ describe("migrate", function () {
     });
   });
 
-  it("should ignore files that don't start with a number", () => {
+  it("should ignore files that don't start with a number", function () {
     fs.writeFileSync(
       path.join(config.migrations_directory, "~2_deploy_contracts.js"),
       "module.exports = function() {};",
@@ -195,7 +203,7 @@ describe("migrate", function () {
     );
   });
 
-  it("should ignore non-js extensions", () => {
+  it("should ignore non-js extensions", function () {
     fs.writeFileSync(
       path.join(config.migrations_directory, "2_deploy_contracts.js~"),
       "module.exports = function() {};",

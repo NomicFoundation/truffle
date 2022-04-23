@@ -1,22 +1,22 @@
 import debugModule from "debug";
-const debug = debugModule("test:data:more-decoding");
+const debug = debugModule("debugger:test:data:more-decoding");
 
 import { assert } from "chai";
 import Web3 from "web3"; //just using for utils
 
-import Ganache from "ganache-core";
+import Ganache from "ganache";
 
 import { prepareContracts, lineOf } from "../helpers";
 import Debugger from "lib/debugger";
 
-import solidity from "lib/solidity/selectors";
+import sourcemapping from "lib/sourcemapping/selectors";
 import data from "lib/data/selectors";
 import evm from "lib/evm/selectors";
 
 import * as Codec from "@truffle/codec";
 
 const __CONTAINERS = `
-pragma solidity ^0.7.0;
+pragma solidity ^0.8.0;
 
 contract ContainersTest {
 
@@ -74,7 +74,7 @@ contract ContainersTest {
 `;
 
 const __KEYSANDBYTES = `
-pragma solidity ^0.7.0;
+pragma solidity ^0.8.8;
 
 contract ElementaryTest {
 
@@ -82,28 +82,36 @@ contract ElementaryTest {
 
   enum Ternary { Red, Green, Blue }
 
+  type MyInt is int8;
+
   //storage variables to be tested
   mapping(bool => bool) boolMap;
-  mapping(byte => byte) byteMap;
+  mapping(bytes1 => bytes1) byteMap;
   mapping(bytes => bytes) bytesMap;
+  mapping(bytes4 => bytes4) selectorMap;
   mapping(uint => uint) uintMap;
   mapping(int => int) intMap;
   mapping(string => string) stringMap;
   mapping(address => address) addressMap;
   mapping(ElementaryTest => ElementaryTest) contractMap;
   mapping(Ternary => Ternary) enumMap;
+  mapping(MyInt => MyInt) wrapMap;
 
   //constant state variables to try as mapping keys
+  //(and for testing on their own)
   uint constant two = 2;
+  string constant hello = "hello";
+  bytes4 constant hexConst = 0xdeadbeef;
+  bytes4 constant short = hex"ff";
 
   function run() public {
     //local variables to be tested
-    byte oneByte;
-    byte[] memory severalBytes;
+    bytes1 oneByte;
+    bytes1[] memory severalBytes;
 
     //set up variables for testing
     oneByte = 0xff;
-    severalBytes = new byte[](1);
+    severalBytes = new bytes1[](1);
     severalBytes[0] = 0xff;
 
     boolMap[true] = true;
@@ -121,10 +129,17 @@ contract ElementaryTest {
 
     stringMap["0xdeadbeef"] = "0xdeadbeef";
     stringMap["12345"] = "12345";
+    stringMap[hello] = hello;
 
     contractMap[this] = this;
 
     enumMap[Ternary.Blue] = Ternary.Blue;
+
+    wrapMap[MyInt.wrap(-2)] = MyInt.wrap(-2);
+
+    selectorMap[hexConst] = hexConst;
+    selectorMap[short] = short;
+    selectorMap[hex"f00f"] = hex"f00f";
 
     emit Done(); //break here
   }
@@ -132,7 +147,7 @@ contract ElementaryTest {
 `;
 
 const __SPLICING = `
-pragma solidity ^0.7.0;
+pragma solidity ^0.8.0;
 
 contract SpliceTest {
   //splicing is (nontrivially) used in two contexts right now:
@@ -170,7 +185,7 @@ contract SpliceTest {
 `;
 
 const __INNERMAPS = `
-pragma solidity ^0.7.0;
+pragma solidity ^0.8.0;
 
 contract ComplexMappingTest {
 
@@ -196,39 +211,44 @@ contract ComplexMappingTest {
 `;
 
 const __OVERFLOW = `
-pragma solidity ^0.7.0;
+pragma solidity ^0.8.0;
 
 contract OverflowTest {
 
   event Unsigned(uint8);
-  event Raw(byte);
+  event Raw(bytes1);
   event Signed(int8);
 
   function unsignedTest() public {
-    uint8[1] memory memoryByte;
-    uint8 byte1 = 255;
-    uint8 byte2 = 255;
-    uint8 sum = byte1 + byte2;
-    emit Unsigned(sum); //BREAK UNSIGNED
+    unchecked {
+      uint8[1] memory memoryByte;
+      uint8 byte1 = 255;
+      uint8 byte2 = 255;
+      uint8 sum = byte1 + byte2;
+      emit Unsigned(sum); //BREAK UNSIGNED
+    }
   }
 
   function rawTest() public {
-    byte full = 0xff;
-    byte right = full >> 1;
+    bytes1 full = 0xff;
+    bytes1 right = full >> 1;
     emit Raw(right); //BREAK RAW
   }
 
   function signedTest() public {
-    int8 byte1 = -128;
-    int8 byte2 = -128;
-    int8 sum = byte1 + byte2;
-    emit Signed(sum); //BREAK SIGNED
+    unchecked {
+      int8 byte1 = -128;
+      int8 byte2 = -128;
+      int8 sum = byte1 + byte2;
+      emit Signed(sum); //BREAK SIGNED
+    }
   }
 }
 `;
 
 const __BADBOOL = `
-pragma solidity ^0.7.0;
+pragma solidity ^0.8.0;
+pragma abicoder v1;
 
 contract BadBoolTest {
 
@@ -241,7 +261,7 @@ contract BadBoolTest {
 `;
 
 const __CIRCULAR = `
-pragma solidity ^0.7.0;
+pragma solidity ^0.8.0;
 
 contract CircularTest {
 
@@ -265,7 +285,7 @@ contract CircularTest {
 `;
 
 const __GLOBALDECLS = `
-pragma solidity ^0.7.0;
+pragma solidity ^0.8.0;
 
 struct GlobalStruct {
   uint x;
@@ -289,7 +309,50 @@ contract GlobalDeclarationTest {
 }
 `;
 
-let sources = {
+const __UNKNOWN = `
+//SPDX-License-Identifier: MIT
+
+pragma solidity ^0.8.0;
+
+contract UnknownTest {
+
+  struct Pair {
+    uint x;
+    uint y;
+  }
+
+  uint known;
+  uint unknown;
+  Pair partialPair;
+  uint[2] partialArray;
+  uint[] partialDynamic;
+  mapping(uint => uint) theMap;
+
+  event Num(uint);
+
+  constructor() {
+    known = 1;
+    unknown = 2;
+    partialPair.x = 3;
+    partialPair.y = 4;
+    partialArray[0] = 5;
+    partialArray[1] = 6;
+    partialDynamic.push(7);
+    partialDynamic.push(8);
+    theMap[9] = 9;
+  }
+
+  function run() public { //BREAK
+    emit Num(known);
+    emit Num(partialPair.x);
+    emit Num(partialArray[0]);
+    emit Num(partialDynamic[0]);
+    emit Num(theMap[9]);
+  }
+}
+`;
+
+const sources = {
   "ContainersTest.sol": __CONTAINERS,
   "ElementaryTest.sol": __KEYSANDBYTES,
   "SpliceTest.sol": __SPLICING,
@@ -297,7 +360,8 @@ let sources = {
   "OverflowTest.sol": __OVERFLOW,
   "BadBoolTest.sol": __BADBOOL,
   "Circular.sol": __CIRCULAR,
-  "GlobalDeclarations.sol": __GLOBALDECLS
+  "GlobalDeclarations.sol": __GLOBALDECLS,
+  "UnknownTest.sol": __UNKNOWN
 };
 
 describe("Further Decoding", function () {
@@ -307,7 +371,16 @@ describe("Further Decoding", function () {
   var compilations;
 
   before("Create Provider", async function () {
-    provider = Ganache.provider({ seed: "debugger", gasLimit: 7000000 });
+    provider = Ganache.provider({
+      seed: "debugger",
+      gasLimit: 7000000,
+      miner: {
+        instamine: "strict"
+      },
+      logging: {
+        quiet: true
+      }
+    });
   });
 
   before("Prepare contracts and artifacts", async function () {
@@ -327,18 +400,16 @@ describe("Further Decoding", function () {
 
     let bugger = await Debugger.forTx(txHash, { provider, compilations });
 
-    let sourceId = bugger.view(solidity.current.source).id;
-    let compilationId = bugger.view(solidity.current.source).compilationId;
-    let source = bugger.view(solidity.current.source).source;
+    let sourceId = bugger.view(sourcemapping.current.source).id;
+    let source = bugger.view(sourcemapping.current.source).source;
     await bugger.addBreakpoint({
       sourceId,
-      compilationId,
       line: lineOf("break here", source)
     });
 
     await bugger.continueUntilBreakpoint();
 
-    const variables = Codec.Format.Utils.Inspect.nativizeVariables(
+    const variables = Codec.Format.Utils.Inspect.unsafeNativizeVariables(
       await bugger.variables()
     );
 
@@ -366,18 +437,16 @@ describe("Further Decoding", function () {
 
     let bugger = await Debugger.forTx(txHash, { provider, compilations });
 
-    let sourceId = bugger.view(solidity.current.source).id;
-    let compilationId = bugger.view(solidity.current.source).compilationId;
-    let source = bugger.view(solidity.current.source).source;
+    let sourceId = bugger.view(sourcemapping.current.source).id;
+    let source = bugger.view(sourcemapping.current.source).source;
     await bugger.addBreakpoint({
       sourceId,
-      compilationId,
       line: lineOf("break here", source)
     });
 
     await bugger.continueUntilBreakpoint();
 
-    const variables = Codec.Format.Utils.Inspect.nativizeVariables(
+    const variables = Codec.Format.Utils.Inspect.unsafeNativizeVariables(
       await bugger.variables()
     );
     debug("variables %O", variables);
@@ -386,14 +455,24 @@ describe("Further Decoding", function () {
       boolMap: { true: true },
       byteMap: { "0x01": "0x01" },
       bytesMap: { "0x01": "0x01" },
-      uintMap: { "1": 1, "2": 2 },
+      uintMap: { 1: 1, 2: 2 },
       intMap: { "-1": -1 },
-      stringMap: { "0xdeadbeef": "0xdeadbeef", "12345": "12345" },
+      stringMap: { "0xdeadbeef": "0xdeadbeef", 12345: "12345", hello: "hello" },
       addressMap: { [address]: address },
       contractMap: { [address]: address },
       enumMap: { "ElementaryTest.Ternary.Blue": "ElementaryTest.Ternary.Blue" },
+      wrapMap: { "-2": -2 },
       oneByte: "0xff",
-      severalBytes: ["0xff"]
+      severalBytes: ["0xff"],
+      two: 2,
+      hexConst: "0xdeadbeef",
+      short: "0xff000000",
+      hello: "hello",
+      selectorMap: {
+        "0xdeadbeef": "0xdeadbeef",
+        "0xff000000": "0xff000000",
+        "0xf00f0000": "0xf00f0000"
+      }
     };
 
     assert.deepInclude(variables, expectedResult);
@@ -408,18 +487,16 @@ describe("Further Decoding", function () {
 
     let bugger = await Debugger.forTx(txHash, { provider, compilations });
 
-    let sourceId = bugger.view(solidity.current.source).id;
-    let compilationId = bugger.view(solidity.current.source).compilationId;
-    let source = bugger.view(solidity.current.source).source;
+    let sourceId = bugger.view(sourcemapping.current.source).id;
+    let source = bugger.view(sourcemapping.current.source).source;
     await bugger.addBreakpoint({
       sourceId,
-      compilationId,
       line: lineOf("break here", source)
     });
 
     await bugger.continueUntilBreakpoint();
 
-    const variables = Codec.Format.Utils.Inspect.nativizeVariables(
+    const variables = Codec.Format.Utils.Inspect.unsafeNativizeVariables(
       await bugger.variables()
     );
 
@@ -446,9 +523,9 @@ describe("Further Decoding", function () {
     let bugger = await Debugger.forTx(txHash, { provider, compilations });
 
     //we're only testing storage so run till end
-    await bugger.continueUntilBreakpoint();
+    await bugger.runToEnd();
 
-    const variables = Codec.Format.Utils.Inspect.nativizeVariables(
+    const variables = Codec.Format.Utils.Inspect.unsafeNativizeVariables(
       await bugger.variables()
     );
 
@@ -504,9 +581,9 @@ describe("Further Decoding", function () {
 
     let bugger = await Debugger.forTx(txHash, { provider, compilations });
 
-    await bugger.continueUntilBreakpoint(); //run till end
+    await bugger.runToEnd();
 
-    const variables = Codec.Format.Utils.Inspect.nativizeVariables(
+    const variables = Codec.Format.Utils.Inspect.unsafeNativizeVariables(
       await bugger.variables()
     );
     debug("variables %O", variables);
@@ -527,9 +604,9 @@ describe("Further Decoding", function () {
 
     let bugger = await Debugger.forTx(txHash, { provider, compilations });
 
-    await bugger.continueUntilBreakpoint(); //run till end
+    await bugger.runToEnd();
 
-    const variables = Codec.Format.Utils.Inspect.nativizeVariables(
+    const variables = Codec.Format.Utils.Inspect.unsafeNativizeVariables(
       await bugger.variables()
     );
     debug("variables %O", variables);
@@ -551,18 +628,16 @@ describe("Further Decoding", function () {
 
     let bugger = await Debugger.forTx(txHash, { provider, compilations });
 
-    let sourceId = bugger.view(solidity.current.source).id;
-    let compilationId = bugger.view(solidity.current.source).compilationId;
-    let source = bugger.view(solidity.current.source).source;
+    let sourceId = bugger.view(sourcemapping.current.source).id;
+    let source = bugger.view(sourcemapping.current.source).source;
     await bugger.addBreakpoint({
       sourceId,
-      compilationId,
       line: lineOf("BREAK HERE", source)
     });
 
     await bugger.continueUntilBreakpoint();
 
-    const circular = Codec.Format.Utils.Inspect.nativize(
+    const circular = Codec.Format.Utils.Inspect.unsafeNativize(
       await bugger.variable("circular")
     );
 
@@ -570,6 +645,82 @@ describe("Further Decoding", function () {
     assert.isArray(circular.children);
     assert.lengthOf(circular.children, 1);
     assert.strictEqual(circular.children[0], circular);
+  });
+
+  it("Distinguishes known and unknown storage", async function () {
+    this.timeout(12000);
+
+    let instance = await abstractions.UnknownTest.deployed();
+    let receipt = await instance.run();
+    let txHash = receipt.tx;
+
+    let bugger = await Debugger.forTx(txHash, { provider, compilations });
+
+    let sourceId = bugger.view(sourcemapping.current.source).id;
+    let source = bugger.view(sourcemapping.current.source).source;
+    await bugger.addBreakpoint({
+      sourceId,
+      line: lineOf("BREAK", source)
+    });
+
+    const assertIsUnknown = variable => {
+      assert.equal(variable.kind, "error");
+      assert.equal(variable.error.kind, "StorageNotSuppliedError");
+    };
+
+    await bugger.continueUntilBreakpoint();
+    let variables = await bugger.variables({ indicateUnknown: true });
+    assertIsUnknown(variables.known); //it's not known yet
+    assert.isTrue(Codec.Export.containsDeliberateReadError(variables.known));
+    assertIsUnknown(variables.unknown);
+    assert.isTrue(Codec.Export.containsDeliberateReadError(variables.unknown));
+    assert.equal(variables.partialPair.kind, "value"); //it's known but individual entries are not
+    assertIsUnknown(variables.partialPair.value[0].value);
+    assertIsUnknown(variables.partialPair.value[1].value);
+    assert.isTrue(
+      Codec.Export.containsDeliberateReadError(variables.partialPair)
+    );
+    assert.equal(variables.partialArray.kind, "value"); //again, it's known but individual entries are not
+    assertIsUnknown(variables.partialArray.value[0]);
+    assertIsUnknown(variables.partialArray.value[1]);
+    assert.isTrue(
+      Codec.Export.containsDeliberateReadError(variables.partialArray)
+    );
+    assertIsUnknown(variables.partialDynamic); //this OTOH is wholly unknown since we don't know its length
+    assert.isTrue(
+      Codec.Export.containsDeliberateReadError(variables.partialDynamic)
+    );
+    assert.equal(variables.theMap.kind, "value"); //maps should never turn up unknown
+    assert.lengthOf(variables.theMap.value, 0); //no keys recorded
+    assert.isFalse(Codec.Export.containsDeliberateReadError(variables.theMap));
+
+    await bugger.runToEnd();
+    variables = await bugger.variables({ indicateUnknown: true });
+    assert.equal(variables.known.kind, "value"); //known now
+    assert.isFalse(Codec.Export.containsDeliberateReadError(variables.known));
+    assertIsUnknown(variables.unknown); //still unknown
+    assert.isTrue(Codec.Export.containsDeliberateReadError(variables.unknown));
+    assert.equal(variables.partialPair.kind, "value"); //first entry now known, second still unknown
+    assert.equal(variables.partialPair.value[0].value.kind, "value");
+    assertIsUnknown(variables.partialPair.value[1].value);
+    assert.isTrue(
+      Codec.Export.containsDeliberateReadError(variables.partialPair)
+    );
+    assert.equal(variables.partialArray.kind, "value"); //similar
+    assert.equal(variables.partialArray.value[0].kind, "value");
+    assertIsUnknown(variables.partialArray.value[1]);
+    assert.isTrue(
+      Codec.Export.containsDeliberateReadError(variables.partialArray)
+    );
+    assert.equal(variables.partialDynamic.kind, "value"); //length & first entry now known
+    assert.equal(variables.partialDynamic.value[0].kind, "value");
+    assertIsUnknown(variables.partialDynamic.value[1]);
+    assert.isTrue(
+      Codec.Export.containsDeliberateReadError(variables.partialDynamic)
+    );
+    assert.equal(variables.theMap.kind, "value"); //maps should never turn up unknown
+    assert.lengthOf(variables.theMap.value, 1); //1 key recorded
+    assert.isFalse(Codec.Export.containsDeliberateReadError(variables.theMap));
   });
 
   describe("Overflow", function () {
@@ -580,18 +731,16 @@ describe("Further Decoding", function () {
 
       let bugger = await Debugger.forTx(txHash, { provider, compilations });
 
-      let sourceId = bugger.view(solidity.current.source).id;
-      let compilationId = bugger.view(solidity.current.source).compilationId;
-      let source = bugger.view(solidity.current.source).source;
+      let sourceId = bugger.view(sourcemapping.current.source).id;
+      let source = bugger.view(sourcemapping.current.source).source;
       await bugger.addBreakpoint({
         sourceId,
-        compilationId,
         line: lineOf("BREAK UNSIGNED", source)
       });
 
       await bugger.continueUntilBreakpoint();
 
-      const variables = Codec.Format.Utils.Inspect.nativizeVariables(
+      const variables = Codec.Format.Utils.Inspect.unsafeNativizeVariables(
         await bugger.variables()
       );
       debug("variables %O", variables);
@@ -612,18 +761,16 @@ describe("Further Decoding", function () {
 
       let bugger = await Debugger.forTx(txHash, { provider, compilations });
 
-      let sourceId = bugger.view(solidity.current.source).id;
-      let compilationId = bugger.view(solidity.current.source).compilationId;
-      let source = bugger.view(solidity.current.source).source;
+      let sourceId = bugger.view(sourcemapping.current.source).id;
+      let source = bugger.view(sourcemapping.current.source).source;
       await bugger.addBreakpoint({
         sourceId,
-        compilationId,
         line: lineOf("BREAK SIGNED", source)
       });
 
       await bugger.continueUntilBreakpoint();
 
-      const variables = Codec.Format.Utils.Inspect.nativizeVariables(
+      const variables = Codec.Format.Utils.Inspect.unsafeNativizeVariables(
         await bugger.variables()
       );
       debug("variables %O", variables);
@@ -644,18 +791,16 @@ describe("Further Decoding", function () {
 
       let bugger = await Debugger.forTx(txHash, { provider, compilations });
 
-      let sourceId = bugger.view(solidity.current.source).id;
-      let compilationId = bugger.view(solidity.current.source).compilationId;
-      let source = bugger.view(solidity.current.source).source;
+      let sourceId = bugger.view(sourcemapping.current.source).id;
+      let source = bugger.view(sourcemapping.current.source).source;
       await bugger.addBreakpoint({
         sourceId,
-        compilationId,
         line: lineOf("BREAK RAW", source)
       });
 
       await bugger.continueUntilBreakpoint();
 
-      const variables = Codec.Format.Utils.Inspect.nativizeVariables(
+      const variables = Codec.Format.Utils.Inspect.unsafeNativizeVariables(
         await bugger.variables()
       );
       debug("variables %O", variables);

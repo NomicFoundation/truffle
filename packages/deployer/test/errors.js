@@ -1,35 +1,38 @@
-const ganache = require("ganache-core");
+const ganache = require("ganache");
 const Web3 = require("web3");
 const assert = require("assert");
-const Reporter = require("@truffle/reporters").migrationsV5;
-const EventEmitter = require("events");
-
 const Deployer = require("../index");
 const utils = require("./helpers/utils");
+const Config = require("@truffle/config");
+const { Environment } = require("@truffle/environment");
 
-describe("Error cases", function() {
+describe("Error cases", function () {
   let owner;
   let accounts;
   let options;
   let networkId;
   let deployer;
-  let reporter;
+  let Abstract;
+  let Loops;
   let Example;
+  let ExampleRevert;
+  let ExampleAssert;
   let UsesExample;
   let IsLibrary;
   let UsesLibrary;
 
   const provider = ganache.provider({
-    vmErrorsOnRPCResponse: false
+    gasLimit: "0x6691b7",
+    hardfork: "istanbul",
+    miner: {
+      instamine: "strict"
+    },
+    logging: { quiet: true }
   });
-
-  const mockMigration = {
-    emitter: new EventEmitter()
-  };
 
   const web3 = new Web3(provider);
 
-  beforeEach(async function() {
+  beforeEach(async function () {
     networkId = await web3.eth.net.getId();
     accounts = await web3.eth.getAccounts();
 
@@ -55,7 +58,7 @@ describe("Error cases", function() {
     Abstract = utils.getContract("Abstract", provider, networkId, owner);
     Loops = utils.getContract("Loops", provider, networkId, owner);
 
-    options = {
+    options = Config.default().merge({
       contracts: [
         Example,
         ExampleRevert,
@@ -67,21 +70,15 @@ describe("Error cases", function() {
         Loops
       ],
       networks: {
-        test: {}
+        test: {
+          network_id: networkId,
+          provider
+        }
       },
-      network: "test",
-      network_id: networkId,
-      provider: provider,
-      logger: {
-        log: val => {}, // eslint-disable-line no-unused-vars
-        error: val => {} // eslint-disable-line no-unused-vars
-      }
-    };
+      network: "test"
+    });
+    await Environment.detect(options);
     deployer = new Deployer(options);
-    reporter = new Reporter();
-    reporter.setDeployer(deployer);
-    reporter.setMigration(mockMigration);
-    reporter.listen();
   });
 
   afterEach(() => {
@@ -89,8 +86,8 @@ describe("Error cases", function() {
     deployer.finish();
   });
 
-  it("library not deployed", async function() {
-    const migrate = function() {
+  it("library not deployed", async function () {
+    const migrate = function () {
       deployer.link(IsLibrary, UsesLibrary);
     };
 
@@ -106,8 +103,8 @@ describe("Error cases", function() {
     }
   });
 
-  it("unlinked library", async function() {
-    const migrate = function() {
+  it("unlinked library", async function () {
+    const migrate = function () {
       deployer.deploy(UsesLibrary);
     };
 
@@ -123,8 +120,8 @@ describe("Error cases", function() {
     }
   });
 
-  it("contract has no bytecode", async function() {
-    const migrate = function() {
+  it("contract has no bytecode", async function () {
+    const migrate = function () {
       deployer.deploy(Abstract);
     };
 
@@ -141,8 +138,8 @@ describe("Error cases", function() {
     }
   });
 
-  it("OOG (no constructor args)", async function() {
-    const migrate = function() {
+  it("OOG (no constructor args)", async function () {
+    const migrate = function () {
       deployer.deploy(Example, { gas: 10 });
     };
 
@@ -160,8 +157,8 @@ describe("Error cases", function() {
     }
   });
 
-  it("OOG (w/ constructor args)", async function() {
-    const migrate = function() {
+  it("OOG (w/ constructor args)", async function () {
+    const migrate = function () {
       deployer.deploy(UsesExample, utils.zeroAddress, { gas: 10 });
     };
 
@@ -180,10 +177,10 @@ describe("Error cases", function() {
     }
   });
 
-  it("OOG (w/ estimate, hits block limit)", async function() {
+  it("OOG (w/ estimate, hits block limit)", async function () {
     this.timeout(100000);
 
-    const migrate = function() {
+    const migrate = function () {
       deployer.deploy(Loops);
     };
 
@@ -199,10 +196,10 @@ describe("Error cases", function() {
     }
   });
 
-  it("OOG (w/ param, hits block limit)", async function() {
+  it("OOG (w/ param, hits block limit)", async function () {
     this.timeout(20000);
 
-    const migrate = function() {
+    const migrate = function () {
       deployer.deploy(Loops, { gas: 100000 });
     };
 
@@ -219,8 +216,8 @@ describe("Error cases", function() {
     }
   });
 
-  it("revert", async function() {
-    migrate = function() {
+  it("revert", async function () {
+    const migrate = function () {
       deployer.deploy(ExampleRevert);
     };
 
@@ -234,8 +231,8 @@ describe("Error cases", function() {
     }
   });
 
-  it("assert", async function() {
-    migrate = function() {
+  it("assert", async function () {
+    const migrate = function () {
       deployer.deploy(ExampleAssert);
     };
 
@@ -249,11 +246,11 @@ describe("Error cases", function() {
     }
   });
 
-  it("exceeds block limit", async function() {
+  it("exceeds block limit", async function () {
     const block = await web3.eth.getBlock("latest");
     const gas = block.gasLimit + 1000;
 
-    migrate = function() {
+    const migrate = function () {
       deployer.deploy(Example, { gas: gas });
     };
 
@@ -270,7 +267,7 @@ describe("Error cases", function() {
     }
   });
 
-  it("insufficient funds", async function() {
+  it("insufficient funds", async function () {
     const emptyAccount = accounts[7];
     let balance = await web3.eth.getBalance(emptyAccount);
     await web3.eth.sendTransaction({
@@ -283,7 +280,7 @@ describe("Error cases", function() {
     balance = await web3.eth.getBalance(emptyAccount);
     assert(parseInt(balance) === 0);
 
-    migrate = function() {
+    const migrate = function () {
       deployer.deploy(Example, { from: emptyAccount });
     };
 
@@ -293,10 +290,7 @@ describe("Error cases", function() {
       await deployer.start();
       assert.fail();
     } catch (err) {
-      assert(err.message.includes("Example"));
       assert(err.message.includes("insufficient funds"));
-      assert(err.message.includes("Account"));
-      assert(err.message.includes("Balance"));
     }
   });
 });

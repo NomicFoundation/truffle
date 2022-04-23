@@ -1,19 +1,19 @@
 import debugModule from "debug";
-const debug = debugModule("test:data:more-decoding");
+const debug = debugModule("debugger:test:data:yul");
 
 import { assert } from "chai";
 
-import Ganache from "ganache-core";
+import Ganache from "ganache";
 
 import { prepareContracts, lineOf } from "../helpers";
 import Debugger from "lib/debugger";
 
-import solidity from "lib/solidity/selectors";
+import sourcemapping from "lib/sourcemapping/selectors";
 
 import * as Codec from "@truffle/codec";
 
 const __YUL = `
-pragma solidity ^0.7.0;
+pragma solidity ^0.8.0;
 
 contract AssemblyTest {
   function run() public {
@@ -51,13 +51,21 @@ let sources = {
 };
 
 describe("Assembly decoding", function () {
-  var provider;
-
-  var abstractions;
-  var compilations;
+  let provider;
+  let abstractions;
+  let compilations;
 
   before("Create Provider", async function () {
-    provider = Ganache.provider({ seed: "debugger", gasLimit: 7000000 });
+    provider = Ganache.provider({
+      seed: "debugger",
+      gasLimit: 7000000,
+      miner: {
+        instamine: "strict"
+      },
+      logging: {
+        quiet: true
+      }
+    });
   });
 
   before("Prepare contracts and artifacts", async function () {
@@ -77,22 +85,18 @@ describe("Assembly decoding", function () {
 
     let bugger = await Debugger.forTx(txHash, { provider, compilations });
 
-    let sourceId = bugger.view(solidity.current.source).id;
-    let compilationId = bugger.view(solidity.current.source).compilationId;
-    let source = bugger.view(solidity.current.source).source;
+    let sourceId = bugger.view(sourcemapping.current.source).id;
+    let source = bugger.view(sourcemapping.current.source).source;
     await bugger.addBreakpoint({
       sourceId,
-      compilationId,
       line: lineOf("BREAK #1", source)
     });
     await bugger.addBreakpoint({
       sourceId,
-      compilationId,
       line: lineOf("BREAK #2", source)
     });
     await bugger.addBreakpoint({
       sourceId,
-      compilationId,
       line: lineOf("BREAK #3", source)
     });
 
@@ -105,7 +109,9 @@ describe("Assembly decoding", function () {
       );
 
     let variables = numberize(
-      Codec.Format.Utils.Inspect.nativizeVariables(await bugger.variables())
+      Codec.Format.Utils.Inspect.unsafeNativizeVariables(
+        await bugger.variables()
+      )
     );
 
     let expectedResult = {
@@ -123,7 +129,9 @@ describe("Assembly decoding", function () {
     await bugger.continueUntilBreakpoint();
 
     variables = numberize(
-      Codec.Format.Utils.Inspect.nativizeVariables(await bugger.variables())
+      Codec.Format.Utils.Inspect.unsafeNativizeVariables(
+        await bugger.variables()
+      )
     );
 
     expectedResult = {
@@ -142,7 +150,9 @@ describe("Assembly decoding", function () {
     await bugger.continueUntilBreakpoint();
 
     variables = numberize(
-      Codec.Format.Utils.Inspect.nativizeVariables(await bugger.variables())
+      Codec.Format.Utils.Inspect.unsafeNativizeVariables(
+        await bugger.variables()
+      )
     );
 
     expectedResult = {

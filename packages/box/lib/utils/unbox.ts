@@ -1,18 +1,18 @@
 import fse from "fs-extra";
 import path from "path";
 import download from "download-git-repo";
-import rp from "request-promise-native";
+import axios from "axios";
 import vcsurl from "vcsurl";
 import { parse as parseURL } from "url";
 import { execSync } from "child_process";
 import inquirer from "inquirer";
-import { boxConfig, unboxOptions } from "typings";
+import type { boxConfig, unboxOptions } from "typings";
 import { promisify } from "util";
 import ignore from "ignore";
 
 function verifyLocalPath(localPath: string) {
   const configPath = path.join(localPath, "truffle-box.json");
-  fse.access(configPath).catch(e => {
+  fse.access(configPath).catch(_e => {
     throw new Error(`Truffle Box at path ${localPath} doesn't exist.`);
   });
 }
@@ -26,22 +26,22 @@ async function verifyVCSURL(url: string) {
       .replace(/#.*/, "")}/master/truffle-box.json`
   );
 
-  const options = {
-    method: "HEAD",
-    uri: `https://${configURL.host}${configURL.path}`,
-    resolveWithFullResponse: true,
-    simple: false
-  };
-
-  const { statusCode } = await rp(options);
-  if (statusCode === 404) {
-    throw new Error(
-      `Truffle Box at URL ${url} doesn't exist. If you believe this is an error, please contact Truffle support.`
+  const repoUrl = `https://${configURL.host}${configURL.path}`;
+  try {
+    await axios.head(
+      repoUrl,
+      { maxRedirects: 50 }
     );
-  } else if (statusCode !== 200) {
-    throw new Error(
-      "Error connecting to github.com. Please check your internet connection and try again."
-    );
+  } catch (error) {
+    if (error.response && error.response.status === 404) {
+      throw new Error(
+        `Truffle Box at URL ${url} doesn't exist. If you believe this is an error, please contact Truffle support.`
+      );
+    } else {
+      const prefix = `Error connecting to ${repoUrl}. Please check your internet connection and try again.`;
+      error.message = `${prefix}\n\n${error.message || ''}`;
+      throw error;
+    }
   }
 }
 
@@ -158,5 +158,6 @@ export = {
   fetchRepository,
   installBoxDependencies,
   prepareToCopyFiles,
-  verifySourcePath
+  verifySourcePath,
+  verifyVCSURL
 };

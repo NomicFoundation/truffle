@@ -1,4 +1,4 @@
-const ganache = require("ganache-core");
+const ganache = require("ganache");
 const Web3 = require("web3");
 const assert = require("assert");
 
@@ -7,9 +7,16 @@ const utils = require("./helpers/utils");
 
 describe("Deployer (async / await)", function () {
   let owner;
+  let deployer;
+  let example;
   let options;
   let networkId;
-  const provider = ganache.provider();
+  const provider = ganache.provider({
+    miner: {
+      instamine: "strict"
+    },
+    logging: { quiet: true }
+  });
   const web3 = new Web3(provider);
 
   beforeEach(async function () {
@@ -119,7 +126,7 @@ describe("Deployer (async / await)", function () {
     await usesLibrary.fireIsLibraryEvent(5);
     await usesLibrary.fireUsesLibraryEvent(7);
 
-    eventOptions = { fromBlock: 0, toBlock: "latest" };
+    const eventOptions = { fromBlock: 0, toBlock: "latest" };
     const events = await usesLibrary.getPastEvents("allEvents", eventOptions);
 
     assert(events[0].args.eventID.toNumber() === 5);

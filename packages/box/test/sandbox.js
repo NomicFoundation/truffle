@@ -1,4 +1,4 @@
-const { sandbox } = require("../");
+const { sandbox } = require("../").default;
 const assert = require("assert");
 
 describe("Box.sandbox", () => {
@@ -11,9 +11,9 @@ describe("Box.sandbox", () => {
     assert(config.truffle_directory);
   });
 
-  it("errors when passed an invalid options configuration", () => {
+  it("errors when passed an invalid options configuration", async () => {
     options = { name: "badBox", force: true, setGracefulCleanup: true };
-    assert.rejects(async () => {
+    await assert.rejects(async () => {
       await sandbox(options);
     }, "should have rejected!");
   });

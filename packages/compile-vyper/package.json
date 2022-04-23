@@ -3,22 +3,35 @@
   "description": "Vyper compiler support",
   "license": "MIT",
   "author": "Evgeniy Filatov <evgeniyfilatov@gmail.com>",
-  "repository": "https://github.com/trufflesuite/truffle/tree/master/packages/compile-vyper",
-  "version": "2.0.1",
+  "homepage": "https://github.com/trufflesuite/truffle/tree/master/packages/compile-vyper#readme",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/trufflesuite/truffle.git",
+    "directory": "packages/compile-vyper"
+  },
+  "bugs": {
+    "url": "https://github.com/trufflesuite/truffle/issues"
+  },
+  "version": "3.1.59",
   "main": "index.js",
   "scripts": {
     "prepare": "exit 0",
     "test": "mocha"
   },
   "dependencies": {
-    "@truffle/compile-solidity": "^5.0.1",
-    "colors": "^1.1.2",
-    "eslint": "^5.5.0",
-    "minimatch": "^3.0.4"
+    "@truffle/compile-common": "^0.7.31",
+    "@truffle/config": "^1.3.27",
+    "@truffle/profiler": "^0.1.19",
+    "@truffle/resolver": "^8.0.18",
+    "colors": "1.4.0",
+    "debug": "^4.3.1",
+    "lodash": "^4.17.21",
+    "minimatch": "^3.0.4",
+    "semver": "^7.3.4"
   },
   "devDependencies": {
-    "@truffle/config": "^1.2.30",
-    "mocha": "8.1.2"
+    "@truffle/code-utils": "^1.2.34",
+    "mocha": "9.2.2"
   },
   "keywords": [
     "compile",
@@ -28,5 +41,6 @@
   ],
   "publishConfig": {
     "access": "public"
-  }
+  },
+  "gitHead": "6b84be7849142588ef2e3224d8a9d7c2ceeb6e4a"
 }

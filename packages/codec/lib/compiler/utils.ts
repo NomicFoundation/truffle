@@ -2,13 +2,32 @@ import debugModule from "debug";
 const debug = debugModule("codec:compiler:utils");
 
 import semver from "semver";
-import { CompilerVersion, SolidityFamily } from "./types";
+import type { CompilerVersion, SolidityFamily } from "./types";
 
 export function solidityFamily(compiler: CompilerVersion): SolidityFamily {
   if (!compiler || compiler.name !== "solc") {
     return "unknown";
   }
   if (
+    semver.satisfies(compiler.version, ">=0.8.9", {
+      includePrerelease: true
+    })
+  ) {
+    return "0.8.9+";
+  } else if (
+    semver.satisfies(compiler.version, ">=0.8.7", {
+      includePrerelease: true
+    })
+  ) {
+    return "0.8.7+";
+  } else if (
+    //see comment below about the weird-looking condition
+    semver.satisfies(compiler.version, "~0.8 || >=0.8.0", {
+      includePrerelease: true
+    })
+  ) {
+    return "0.8.x";
+  } else if (
     semver.satisfies(compiler.version, "~0.5 || >=0.5.0", {
       includePrerelease: true
     })
