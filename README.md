@@ -1,4 +1,4 @@
-# Buidler Truffle's monorepo fork
+# Hardhat Truffle's monorepo fork
 
 This is a fork of the Truffle monorepo.
 
@@ -6,12 +6,12 @@ This is a fork of the Truffle monorepo.
 
 | Project              | Forked Version   | Changes                                 |
 | -------------------- | :--------------: | --------------------------------------- |
-| `@truffle/contract`  |    `v4.2.23`     | Added Solidity stack traces integration |
+| `@truffle/contract`  |    `v4.5.10`     | Added Solidity stack traces integration |
 
 
 ## Versioning
 
-Our forked projects follow the same Major and Minor versions than upstream's. 
+Our forked projects follow the same Major and Minor versions as upstream's. 
 Patch versions may differ because of bug-fixing releases.
 
 ## Building the packages
